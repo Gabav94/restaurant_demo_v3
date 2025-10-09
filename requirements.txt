@@ -1,0 +1,15 @@
+streamlit==1.37.1
+streamlit-webrtc==0.47.7
+av==12.3.0
+langchain==0.2.14
+langchain-openai==0.1.14
+openai==1.45.1
+sqlalchemy==2.0.35
+pandas==2.2.3
+python-dotenv==1.0.1
+pytesseract==0.3.10
+Pillow==10.4.0
+opencv-python==4.10.0.84
+numpy==1.26.4
+tiktoken==0.7.0
+requests==2.32.3
