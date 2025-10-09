@@ -244,3 +244,155 @@ def fetch_menu_banners() -> List[str]:
 
 # --------- ORDERS / PENDINGS / EXPORTS (igual que antes; omitido por brevedad si ya lo tienes) ---------
 # ... (mantén aquí el resto de funciones de órdenes e interacciones que ya tienes) ...
+
+# =========================
+# ===== LIMPIEZAS (Admin)
+# =========================
+
+
+def _safe_remove_file(path: str) -> None:
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+def clear_orders() -> int:
+    """
+    Elimina TODAS las órdenes.
+    Retorna la cantidad de registros eliminados.
+    """
+    s = _s()
+    try:
+        cnt = s.query(Order).count()
+        s.query(Order).delete(synchronize_session=False)
+        s.commit()
+        return cnt
+    finally:
+        s.close()
+
+
+def clear_pending_questions() -> int:
+    """
+    Elimina TODAS las interacciones pendientes/difíciles.
+    """
+    s = _s()
+    try:
+        cnt = s.query(PendingQuestion).count()
+        s.query(PendingQuestion).delete(synchronize_session=False)
+        s.commit()
+        return cnt
+    finally:
+        s.close()
+
+
+def clear_menu_items() -> int:
+    """
+    Elimina TODOS los ítems del menú.
+    """
+    s = _s()
+    try:
+        cnt = s.query(MenuItem).count()
+        s.query(MenuItem).delete(synchronize_session=False)
+        s.commit()
+        return cnt
+    finally:
+        s.close()
+
+
+def clear_menu_item(item_id: int) -> int:
+    """
+    Elimina un ítem del menú por ID.
+    Retorna 1 si se eliminó, 0 si no existía.
+    """
+    s = _s()
+    try:
+        obj = s.query(MenuItem).get(item_id)
+        if not obj:
+            return 0
+        s.delete(obj)
+        s.commit()
+        return 1
+    finally:
+        s.close()
+
+
+def clear_menu_images() -> int:
+    """
+    Elimina TODAS las imágenes del menú (base y archivos).
+    """
+    s = _s()
+    try:
+        rows = s.query(MenuImage).all()
+        for r in rows:
+            _safe_remove_file(r.path)
+            s.delete(r)
+        s.commit()
+        return len(rows)
+    finally:
+        s.close()
+
+
+def clear_menu_image(image_id: int) -> int:
+    """
+    Elimina una imagen del menú por ID (base y archivo).
+    Retorna 1 si se eliminó, 0 si no existía.
+    """
+    s = _s()
+    try:
+        r = s.query(MenuImage).get(image_id)
+        if not r:
+            return 0
+        _safe_remove_file(r.path)
+        s.delete(r)
+        s.commit()
+        return 1
+    finally:
+        s.close()
+
+
+def clear_banner_images() -> int:
+    """
+    Elimina TODOS los banners (base y archivos).
+    Nota: aunque ya no los uses en Cliente, se limpian por compatibilidad.
+    """
+    s = _s()
+    try:
+        rows = s.query(BannerImage).all()
+        for r in rows:
+            _safe_remove_file(r.path)
+            s.delete(r)
+        s.commit()
+        return len(rows)
+    finally:
+        s.close()
+
+
+def clear_everything(keep_media_folder: bool = True) -> dict:
+    """
+    Limpieza masiva. Útil para el Súper Admin:
+      - Órdenes
+      - Pendientes
+      - Ítems del menú
+      - Imágenes del menú (y archivos)
+      - Banners (y archivos)
+    Retorna un resumen por tipo.
+    """
+    res = {
+        "orders": clear_orders(),
+        "pending_questions": clear_pending_questions(),
+        "menu_items": clear_menu_items(),
+        "menu_images": clear_menu_images(),
+        "banner_images": clear_banner_images()
+    }
+
+    # Opcionalmente, limpiar también la carpeta media vacía (no recomendado en demo)
+    if not keep_media_folder:
+        try:
+            if os.path.isdir(MEDIA_DIR) and not os.listdir(MEDIA_DIR):
+                os.rmdir(MEDIA_DIR)
+        except Exception:
+            pass
+
+    return res
