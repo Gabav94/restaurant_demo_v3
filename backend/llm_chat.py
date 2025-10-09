@@ -10,9 +10,11 @@ import re
 from typing import List, Dict, Any
 from dotenv import dotenv_values
 from openai import OpenAI
+import streamlit as st
 
 _cfg = dotenv_values(".env")
-_client = OpenAI(api_key=_cfg.get("OPENAI_API_KEY"))
+# _client = OpenAI(api_key=_cfg.get("OPENAI_API_KEY"))
+_client = OpenAI(api_key=st.secrets("OPENAI_API_KEY"))
 
 # ---------- Prompt / Chat ----------
 
