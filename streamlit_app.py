@@ -7,83 +7,65 @@ Created on Thu Sep 25 10:36:48 2025
 
 from __future__ import annotations
 import streamlit as st
-from backend.config import get_config
-from backend.db import ensure_db_and_seed, fetch_menu_images_full
-from backend.utils import render_auto_carousel
+from backend.config import ensure_default_config, get_config, update_config
+from backend.db import ensure_db_and_seed
 
-st.set_page_config(page_title="InnovaChat • Restaurantes",
+st.set_page_config(page_title="Restaurant AI Demo",
                    page_icon="🍽️", layout="wide")
 
-st.markdown("""
-<style>
-@media (max-width: 900px){
-  .block-container { padding-top: 0.8rem; padding-bottom: 2rem; }
-}
-.card{border:1px solid #eee;border-radius:12px;padding:14px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.03);}
-.hint{color:#666;font-size:.9rem}
-</style>
-""", unsafe_allow_html=True)
 
-
-def _t(lang):
-    return (lambda es, en: es if lang == "es" else en)
+def _image_compat(img):
+    try:
+        st.image(img, use_container_width=True)
+    except TypeError:
+        st.image(img, use_column_width=True)
 
 
 def main():
+    # Asegurar config y DB con seed
+    ensure_default_config()
+    ensure_db_and_seed()
+
     cfg = get_config()
     lang = cfg.get("language", "es")
-    t = _t(lang)
 
-    st.title(t("🍽️ RAIVA - InnovaChat para Restaurantes — Demo",
-             "🍽️ RAIVA - InnovaChat for Restaurants — Demo"))
-    st.caption(t("Bienvenido/a. Usa el menú lateral: **Cliente**, **Restaurante**, **Admin (Súper)**.",
-                 "Welcome. Use the left sidebar: **Client**, **Restaurant**, **Admin (Super)**."))
+    st.title("🍽️ Restaurant AI Demo v4")
+    st.caption("Conversational Ordering • Streamlit • OpenAI • OCR • Voice")
 
-    with st.expander(t("Inicialización (opcional)", "Initialization (optional)"), expanded=False):
-        st.write(t("Si es tu primera vez, crea datos de ejemplo y carga imágenes de assets.",
-                   "If this is your first time, create sample data and load images from assets."))
-        if st.button(t("🔧 Asegurar DB y datos de ejemplo", "🔧 Ensure DB and sample data")):
-            try:
-                ensure_db_and_seed()
-                st.success(t("Listo. Abre Cliente o Restaurante.",
-                           "Done. Open Client or Restaurant."))
-            except Exception as e:
-                st.error(f"Init error: {e}")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.markdown(
+            "Bienvenido" if lang == "es" else "Welcome"
+        )
+        st.markdown(
+            """
+            **Cliente:** chat tipo WhatsApp con voz, detección de datos y confirmación de pedido.  
+            **Restaurante:** gestión de menú, órdenes, OCR, voz, FAQ dinámica.  
+            **Admin:** idioma, modelo, tono, limpieza de datos y banners.
+            """
+            if lang == "es" else
+            """
+            **Client:** WhatsApp-like chat with voice, data detection and order confirmation.  
+            **Restaurant:** menu management, orders, OCR, voice, dynamic FAQ.  
+            **Admin:** language, model, tone, data cleanup and banners.
+            """
+        )
+        st.info("Usa el menú lateral para navegar." if lang ==
+                "es" else "Use the left sidebar to navigate.")
 
-    imgs = fetch_menu_images_full()
-    colA, colB = st.columns([1.2, 1])
-    with colA:
-        st.subheader(t("Vista previa del carrusel", "Carousel preview"))
-        if imgs:
-            render_auto_carousel([r["path"]
-                                 for r in imgs], height_px=220, interval_sec=4)
-            st.caption(t("El Cliente verá este carrusel.",
-                       "Client will see this carousel."))
-        else:
-            st.info(t("No hay imágenes aún. Sube desde **Restaurante** o corre la inicialización.",
-                    "No images yet. Upload from **Restaurant** or run initialization."))
-
-    with colB:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader(t("Entrar a…", "Go to…"))
-        st.write("• " + t("**Cliente** (chat)", "**Client** (chat)"))
-        st.write("• " + t("**Restaurante** (gestión)", "**Restaurant** (ops)"))
-        st.write("• " + t("**Admin (Súper)** (configuración)",
-                 "**Admin (Super)** (settings)"))
-        st.markdown('<div class="hint">'+t("Usa el menú lateral izquierdo.",
-                    "Use the left sidebar.")+'</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+    with col2:
+        st.subheader("Idioma / Language")
+        new_lang = st.radio(
+            "", ["es", "en"], horizontal=True, index=0 if lang == "es" else 1)
+        if new_lang != lang:
+            update_config({"language": new_lang})
+            st.rerun()
 
     st.write("---")
-    st.subheader(t("Configuración actual", "Current configuration"))
-    st.write({
-        "language": cfg.get("language"),
-        "assistant_name": cfg.get("assistant_name"),
-        "tone": cfg.get("tone"),
-        "model": cfg.get("model"),
-        "temperature": cfg.get("temperature"),
-        "currency": cfg.get("currency"),
-    })
+    st.write("**Páginas:**")
+    st.write("- 1️⃣ Cliente")
+    st.write("- 2️⃣ Restaurante")
+    st.write("- 3️⃣ Admin (Súper admin)")
 
 
 if __name__ == "__main__":

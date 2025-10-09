@@ -1,0 +1,8 @@
+{
+  "language": "es",
+  "assistant_name": "Asistente",
+  "tone": "Amable y profesional; breve y guiado.",
+  "model": "gpt-4o-mini",
+  "temperature": 0.4,
+  "currency": "USD"
+}

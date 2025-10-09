@@ -33,8 +33,6 @@ Base.metadata.create_all(engine)
 
 def _s(): return SessionLocal()
 
-# ===== CRUD =====
-
 
 def add_faq(pattern: str, answer: str, language: str = "es") -> Dict:
     s = _s()
@@ -59,10 +57,6 @@ def fetch_faq(language: str = "es") -> List[Dict]:
 
 
 def match_faq(question: str, language: str = "es") -> str | None:
-    """
-    Busca una pregunta similar en la FAQ. 
-    Se puede mejorar luego con embeddings o similitud difusa.
-    """
     s = _s()
     try:
         rows = s.query(FAQ).filter(FAQ.language == language).all()

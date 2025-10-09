@@ -6,56 +6,93 @@ Created on Wed Sep 24 10:37:58 2025
 """
 
 from __future__ import annotations
-import base64
+from typing import List, Dict, Callable, Optional
 import streamlit as st
+import pandas as pd
 
 
-def render_auto_carousel(paths, height_px=220, interval_sec=4):
-    """
-    Carrusel simple autónomo usando base64 embebido (no depende de st.image).
-    paths: lista de rutas locales a imágenes.
-    """
-    if not paths:
-        return
-    imgs_b64 = []
-    for p in paths:
+def _image(img, **kwargs):
+    try:
+        return st.image(img, use_container_width=True, **{k: v for k, v in kwargs.items() if k != "use_container_width"})
+    except TypeError:
         try:
-            with open(p, "rb") as f:
-                b = base64.b64encode(f.read()).decode()
-            ext = (p.split(".")[-1] or "png").lower()
-            if ext not in ("png", "jpg", "jpeg", "webp"):
-                ext = "png"
-            imgs_b64.append(f"data:image/{ext};base64,{b}")
-        except Exception:
-            continue
-    if not imgs_b64:
-        return
+            return st.image(img, use_column_width=True, **{k: v for k, v in kwargs.items() if k != "use_container_width"})
+        except TypeError:
+            return st.image(img)
 
-    html = f"""
-    <style>
-    .carousel-wrap {{
-      position: relative; overflow: hidden; width: 100%;
-      height: {height_px}px; border-radius: 12px; border:1px solid #eee;
-    }}
-    .carousel-track {{
-      display: flex; width: {len(imgs_b64)*100}%;
-      animation: slide {len(imgs_b64)*interval_sec}s infinite linear;
-    }}
-    .carousel-item {{
-      flex: 0 0 calc(100% / {len(imgs_b64)}); display:flex; align-items:center; justify-content:center;
-      background:#111;
-    }}
-    .carousel-item img {{ max-height: {height_px}px; width:auto; }}
-    @keyframes slide {{
-      0% {{ transform: translateX(0%); }}
-      100% {{ transform: translateX(-{(len(imgs_b64)-1)*100}%); }}
-    }}
-    </style>
-    <div class="carousel-wrap">
-      <div class="carousel-track">
-        {''.join(
-        f'<div class="carousel-item"><img src="{src}"/></div>' for src in imgs_b64)}
-      </div>
-    </div>
-    """
-    st.components.v1.html(html, height=height_px+16, scrolling=False)
+
+def _button(label: str, key: Optional[str] = None):
+    return st.button(label, key=key)
+
+
+def menu_table_component(
+    menu: List[Dict],
+    lang: str = "es",
+    deletable: bool = False,
+    on_delete: Optional[Callable[[str], None]] = None,
+):
+    if not menu:
+        st.info("No hay ítems de menú." if lang == "es" else "No menu items.")
+        return
+    df = pd.DataFrame([{
+        "id": m.get("id"),
+        "Nombre" if lang == "es" else "Name": m.get("name", ""),
+        "Descripción" if lang == "es" else "Description": m.get("description", ""),
+        "Precio" if lang == "es" else "Price": f'{m.get("currency", "")} {float(m.get("price", 0.0)):.2f}',
+        "Notas" if lang == "es" else "Notes": m.get("special_notes", ""),
+    } for m in menu])
+    try:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    except TypeError:
+        st.dataframe(df)
+
+    if deletable and on_delete:
+        st.markdown("---")
+        st.caption("Eliminar ítem del menú" if lang ==
+                   "es" else "Delete menu item")
+        ids = [m.get("id") for m in menu if m.get("id") is not None]
+        if ids:
+            sel = st.selectbox("ID", ids, key="menu_delete_id")
+            if _button("Borrar" if lang == "es" else "Delete", key="btn_delete_menu"):
+                try:
+                    on_delete(sel)
+                    st.success("Ítem eliminado." if lang ==
+                               "es" else "Item deleted.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(("No se pudo eliminar: " if lang ==
+                             "es" else "Failed to delete: ") + str(e))
+
+
+def menu_gallery_component(
+    menu: List[Dict],
+    lang: str = "es",
+    images: Optional[List[str]] = None,
+    columns: int = 2,
+):
+    if not menu and not images:
+        st.info("No hay elementos para mostrar." if lang ==
+                "es" else "Nothing to show.")
+        return
+    if images:
+        if columns < 1:
+            columns = 1
+        for i in range(0, len(images), columns):
+            row = st.columns(columns)
+            for j, col in enumerate(row):
+                k = i + j
+                if k < len(images):
+                    with col:
+                        _image(images[k])
+    if menu:
+        for m in menu:
+            name = m.get("name", "")
+            price = f'{m.get("currency", "")} {float(m.get("price", 0.0)):.2f}'
+            notes = m.get("special_notes", "")
+            desc = m.get("description", "")
+            st.markdown(f"**{name}** — {price}")
+            if notes:
+                st.caption(notes)
+            if desc:
+                st.write(desc)
+            st.write("")
