@@ -10,14 +10,16 @@ import os
 import json
 import uuid
 import datetime as dt
-from typing import List, Dict
-from sqlalchemy import create_engine, Column, Integer, String, Text, Float, DateTime, Boolean
+from typing import List, Dict, Any, Optional
+from sqlalchemy import create_engine, Column, Integer, String, Text, Float, DateTime, Boolean, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from PIL import Image, ImageDraw, ImageFont
 from backend.config import get_config
 
 DB_DIR = "data"
 MEDIA_DIR = os.path.join(DB_DIR, "media")
+ASSETS_DIR = os.path.join("assets", "menu_images")
+os.makedirs(DB_DIR, exist_ok=True)
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
 DB_PATH = os.path.join(DB_DIR, "app.db")
@@ -25,8 +27,9 @@ engine = create_engine(f"sqlite:///{DB_PATH}", echo=False, future=True)
 SessionLocal = sessionmaker(
     bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 Base = declarative_base()
+def _s(): return SessionLocal()
 
-# --------- MODELOS ---------
+# ---------------- Models ----------------
 
 
 class MenuItem(Base):
@@ -46,7 +49,7 @@ class MenuImage(Base):
     created_at = Column(DateTime, default=dt.datetime.utcnow)
 
 
-class BannerImage(Base):
+class BannerImage(Base):  # compat
     __tablename__ = "banner_images"
     id = Column(Integer, primary_key=True)
     path = Column(String)
@@ -58,16 +61,13 @@ class Order(Base):
     id = Column(String, primary_key=True)  # UUID
     client_name = Column(String)
     phone = Column(String)
-    delivery_type = Column(String)  # pickup | delivery
+    delivery_type = Column(String)  # pickup|delivery
     address = Column(Text)
     pickup_eta_min = Column(Integer)
     payment_method = Column(String)
-
     items_json = Column(Text)
     total = Column(Float, default=0.0)
     currency = Column(String, default="USD")
-
-    # confirmed, preparing, ready, delivered
     status = Column(String, default="confirmed")
     created_at = Column(DateTime, default=dt.datetime.utcnow)
     priority = Column(Integer, default=10)
@@ -77,11 +77,10 @@ class Order(Base):
 
 class PendingQuestion(Base):
     __tablename__ = "pending_questions"
-    id = Column(String, primary_key=True)  # UUID
+    id = Column(String, primary_key=True)
     conversation_id = Column(String)
     question = Column(Text)
     language = Column(String, default="es")
-    # pending/approved/denied/custom/expired
     status = Column(String, default="pending")
     answer_msg = Column(Text, nullable=True)
     created_at = Column(DateTime, default=dt.datetime.utcnow)
@@ -90,17 +89,75 @@ class PendingQuestion(Base):
 
 Base.metadata.create_all(engine)
 
-
-def _s(): return SessionLocal()
-
-# --------- SEED / BANNERS (se mantienen para compat, pero ya no se usan en Cliente) ---------
+# ------------- Migration helpers -------------
 
 
-def _generate_banner(text: str, price: str, desc: str, filename: str):
+def _column_missing(table: str, column: str) -> bool:
+    insp = inspect(engine)
+    cols = [c["name"] for c in insp.get_columns(table)]
+    return column not in cols
+
+
+def migrate_orders_table():
+    with engine.begin() as conn:
+        needed = [
+            ("client_name", "TEXT"), ("phone",
+                                      "TEXT"), ("delivery_type", "TEXT"), ("address", "TEXT"),
+            ("pickup_eta_min", "INTEGER"), ("payment_method",
+                                            "TEXT"), ("items_json", "TEXT"),
+            ("total", "FLOAT"), ("currency", "TEXT"), ("status",
+                                                       "TEXT"), ("created_at", "DATETIME"),
+            ("priority", "INTEGER"), ("sla_deadline",
+                                      "DATETIME"), ("sla_breached", "BOOLEAN"),
+        ]
+        for col, typ in needed:
+            if _column_missing("orders", col):
+                conn.execute(
+                    text(f"ALTER TABLE orders ADD COLUMN {col} {typ}"))
+
+# ------------- Assets seed helpers -------------
+
+
+def _list_asset_images() -> List[str]:
+    if not os.path.isdir(ASSETS_DIR):
+        return []
+    valid = {".png", ".jpg", ".jpeg", ".webp"}
+    return [os.path.join(ASSETS_DIR, f) for f in os.listdir(ASSETS_DIR) if os.path.splitext(f)[1].lower() in valid]
+
+
+def seed_menu_images_from_assets() -> int:
+    s = _s()
+    try:
+        if s.query(MenuImage).count() > 0:
+            return 0
+        paths = _list_asset_images()
+        if not paths:
+            return 0
+        cnt = 0
+        for ap in paths:
+            ext = os.path.splitext(ap)[1].lower() or ".png"
+            fname = f"menu_{uuid.uuid4().hex}{ext}"
+            dst = os.path.join(MEDIA_DIR, fname)
+            try:
+                with open(ap, "rb") as fr, open(dst, "wb") as fw:
+                    fw.write(fr.read())
+                s.add(MenuImage(path=dst))
+                cnt += 1
+            except Exception:
+                pass
+        s.commit()
+        return cnt
+    finally:
+        s.close()
+
+# ------------- Seed -------------
+
+
+def _generate_banner(text: str, price: str, desc: str, filename: str) -> str:
     path = os.path.join(MEDIA_DIR, filename)
     if os.path.exists(path):
         return path
-    img = Image.new("RGB", (1024, 360), color=(245, 245, 245))
+    img = Image.new("RGB", (1024, 360), (245, 245, 245))
     d = ImageDraw.Draw(img)
     try:
         font_b = ImageFont.truetype("arial.ttf", 48)
@@ -111,17 +168,17 @@ def _generate_banner(text: str, price: str, desc: str, filename: str):
     d.text((40, 40), text, fill=(25, 25, 25), font=font_b)
     d.text((40, 120), price, fill=(60, 60, 60), font=font_b)
     d.text((40, 190), desc, fill=(80, 80, 80), font=font_m)
-    img.save(path, format="PNG")
+    img.save(path, "PNG")
     return path
 
 
 def ensure_db_and_seed():
     Base.metadata.create_all(engine)
+    migrate_orders_table()
     s = _s()
     try:
         if s.query(MenuItem).count() == 0:
-            cfg = get_config()
-            cur = cfg.get("currency", "USD")
+            cur = get_config().get("currency", "USD")
             s.add_all([
                 MenuItem(name="Hamburguesa", description="Pan, queso, carne, tomate, lechuga, cebolla y salsa de la casa.",
                          price=5.99, currency=cur, special_notes="alto en sal"),
@@ -131,7 +188,7 @@ def ensure_db_and_seed():
                          price=3.99, currency=cur, special_notes="vegetariano"),
             ])
             s.commit()
-        # banners opcionales solo como respaldo visual
+        seed_menu_images_from_assets()
         if s.query(BannerImage).count() == 0:
             p1 = _generate_banner(
                 "Hamburguesa", "$5.99", "Pan, queso, carne y salsa de la casa", "banner_hamburguesa.png")
@@ -145,39 +202,42 @@ def ensure_db_and_seed():
     finally:
         s.close()
 
-# --------- MENÚ ---------
+# ------------- Menu CRUD -------------
 
 
-def fetch_menu() -> List[Dict]:
+def fetch_menu() -> List[Dict[str, Any]]:
     s = _s()
     try:
         rows = s.query(MenuItem).order_by(MenuItem.name.asc()).all()
-        return [{"id": r.id, "name": r.name, "description": r.description, "price": r.price, "currency": r.currency, "special_notes": r.special_notes} for r in rows]
+        return [{"id": r.id, "name": r.name, "description": r.description, "price": float(r.price or 0.0),
+                 "currency": r.currency or "USD", "special_notes": r.special_notes or ""} for r in rows]
     finally:
         s.close()
 
 
-def add_menu_item(name: str, description: str, price: float, currency: str, special_notes: str = ""):
+def add_menu_item(name: str, description: str, price: float, currency: str, special_notes: str = "") -> None:
     s = _s()
     try:
-        s.add(MenuItem(name=name, description=description, price=price,
-              currency=currency, special_notes=special_notes))
+        s.add(MenuItem(name=name.strip(), description=(description or "").strip(),
+                       price=float(price or 0.0), currency=currency, special_notes=(special_notes or "").strip()))
         s.commit()
     finally:
         s.close()
 
 
-def delete_menu_item(item_id: int):
+def delete_menu_item(item_id: int) -> bool:
     s = _s()
     try:
-        it = s.query(MenuItem).get(item_id)
-        if it:
-            s.delete(it)
-            s.commit()
+        obj = s.query(MenuItem).get(item_id)
+        if not obj:
+            return False
+        s.delete(obj)
+        s.commit()
+        return True
     finally:
         s.close()
 
-# --------- IMÁGENES DEL MENÚ (gestión completa) ---------
+# ------------- Menu images -------------
 
 
 def add_menu_image(uploaded_file) -> str:
@@ -204,7 +264,7 @@ def fetch_menu_images() -> List[str]:
         s.close()
 
 
-def fetch_menu_images_full() -> List[Dict]:
+def fetch_menu_images_full() -> List[Dict[str, Any]]:
     s = _s()
     try:
         rows = s.query(MenuImage).order_by(MenuImage.created_at.desc()).all()
@@ -230,169 +290,195 @@ def delete_menu_image(image_id: int) -> bool:
     finally:
         s.close()
 
-# --------- BANNERS (compat) ---------
+# ------------- Orders / Queue -------------
 
 
-def fetch_menu_banners() -> List[str]:
+def _compute_total(items: List[Dict]) -> float:
+    return round(sum(float(i.get("unit_price", 0.0))*int(i.get("qty", 1)) for i in (items or [])), 2)
+
+
+def create_order_from_chat_ready(client: Dict[str, Any], items: List[Dict], currency: str = "USD") -> Dict[str, Any]:
+    now = dt.datetime.utcnow()
+    total = _compute_total(items)
+    order_id = uuid.uuid4().hex
+    if (client or {}).get("delivery_type") == "delivery":
+        sla_deadline = now+dt.timedelta(minutes=30)
+    else:
+        eta = int((client or {}).get("pickup_eta_min") or 0) or 30
+        sla_deadline = now+dt.timedelta(minutes=eta)
+    o = Order(id=order_id, client_name=(client or {}).get("name", ""), phone=(client or {}).get("phone", ""),
+              delivery_type=(client or {}).get("delivery_type", ""), address=(client or {}).get("address", ""),
+              pickup_eta_min=int((client or {}).get("pickup_eta_min") or 0), payment_method=(client or {}).get("payment_method", ""),
+              items_json=json.dumps(items, ensure_ascii=False), total=total, currency=currency,
+              status="confirmed", created_at=now, priority=10, sla_deadline=sla_deadline, sla_breached=False)
     s = _s()
     try:
-        rows = s.query(BannerImage).order_by(
-            BannerImage.created_at.desc()).all()
-        return [r.path for r in rows]
-    finally:
-        s.close()
-
-# --------- ORDERS / PENDINGS / EXPORTS (igual que antes; omitido por brevedad si ya lo tienes) ---------
-# ... (mantén aquí el resto de funciones de órdenes e interacciones que ya tienes) ...
-
-# =========================
-# ===== LIMPIEZAS (Admin)
-# =========================
-
-
-def _safe_remove_file(path: str) -> None:
-    try:
-        if path and os.path.isfile(path):
-            os.remove(path)
-    except Exception:
-        pass
-
-
-def clear_orders() -> int:
-    """
-    Elimina TODAS las órdenes.
-    Retorna la cantidad de registros eliminados.
-    """
-    s = _s()
-    try:
-        cnt = s.query(Order).count()
-        s.query(Order).delete(synchronize_session=False)
+        s.add(o)
         s.commit()
-        return cnt
+        return {"id": o.id, "client_name": o.client_name, "phone": o.phone, "delivery_type": o.delivery_type,
+                "address": o.address, "pickup_eta_min": o.pickup_eta_min, "payment_method": o.payment_method,
+                "items": items, "total": total, "currency": currency, "status": "confirmed",
+                "created_at": now.isoformat(), "priority": 10}
     finally:
         s.close()
 
 
-def clear_pending_questions() -> int:
-    """
-    Elimina TODAS las interacciones pendientes/difíciles.
-    """
+def fetch_orders_queue() -> List[Dict[str, Any]]:
     s = _s()
     try:
-        cnt = s.query(PendingQuestion).count()
-        s.query(PendingQuestion).delete(synchronize_session=False)
-        s.commit()
-        return cnt
-    finally:
-        s.close()
-
-
-def clear_menu_items() -> int:
-    """
-    Elimina TODOS los ítems del menú.
-    """
-    s = _s()
-    try:
-        cnt = s.query(MenuItem).count()
-        s.query(MenuItem).delete(synchronize_session=False)
-        s.commit()
-        return cnt
-    finally:
-        s.close()
-
-
-def clear_menu_item(item_id: int) -> int:
-    """
-    Elimina un ítem del menú por ID.
-    Retorna 1 si se eliminó, 0 si no existía.
-    """
-    s = _s()
-    try:
-        obj = s.query(MenuItem).get(item_id)
-        if not obj:
-            return 0
-        s.delete(obj)
-        s.commit()
-        return 1
-    finally:
-        s.close()
-
-
-def clear_menu_images() -> int:
-    """
-    Elimina TODAS las imágenes del menú (base y archivos).
-    """
-    s = _s()
-    try:
-        rows = s.query(MenuImage).all()
+        rows = s.query(Order).order_by(
+            Order.priority.asc(), Order.created_at.asc()).all()
+        out = []
         for r in rows:
-            _safe_remove_file(r.path)
-            s.delete(r)
-        s.commit()
-        return len(rows)
+            try:
+                items = json.loads(r.items_json or "[]")
+            except Exception:
+                items = []
+            out.append({"id": r.id, "client_name": r.client_name, "phone": r.phone, "delivery_type": r.delivery_type,
+                        "address": r.address, "pickup_eta_min": r.pickup_eta_min, "payment_method": r.payment_method,
+                        "items": items, "total": float(r.total or 0.0), "currency": r.currency or "USD",
+                        "status": r.status, "created_at": r.created_at, "priority": int(r.priority or 10),
+                        "sla_deadline": r.sla_deadline, "sla_breached": bool(r.sla_breached)})
+        return out
     finally:
         s.close()
 
 
-def clear_menu_image(image_id: int) -> int:
-    """
-    Elimina una imagen del menú por ID (base y archivo).
-    Retorna 1 si se eliminó, 0 si no existía.
-    """
+def update_order_status(order_id: str, new_status: str) -> bool:
     s = _s()
     try:
-        r = s.query(MenuImage).get(image_id)
+        r = s.query(Order).get(order_id)
         if not r:
-            return 0
-        _safe_remove_file(r.path)
-        s.delete(r)
+            return False
+        r.status = new_status
+        if new_status == "delivered":
+            r.priority = 999
         s.commit()
-        return 1
+        return True
     finally:
         s.close()
 
 
-def clear_banner_images() -> int:
-    """
-    Elimina TODOS los banners (base y archivos).
-    Nota: aunque ya no los uses en Cliente, se limpian por compatibilidad.
-    """
+def bump_priorities_if_sla_missed() -> int:
+    now = dt.datetime.utcnow()
     s = _s()
     try:
-        rows = s.query(BannerImage).all()
+        rows = s.query(Order).filter(
+            Order.sla_deadline.isnot(None),
+            Order.sla_deadline < now,
+            Order.status != "delivered"
+        ).all()
+        cnt = 0
         for r in rows:
-            _safe_remove_file(r.path)
-            s.delete(r)
+            if not r.sla_breached or (r.priority or 10) > 1:
+                r.sla_breached = True
+                r.priority = 1
+                cnt += 1
         s.commit()
-        return len(rows)
+        return cnt
+    finally:
+        s.close()
+
+# ------------- Pendings + Export -------------
+
+
+def create_pending_question(conversation_id: str, question: str, language: str = "es", ttl_sec: int = 60) -> str:
+    pid = uuid.uuid4().hex
+    now = dt.datetime.utcnow()
+    exp = now+dt.timedelta(seconds=int(ttl_sec or 60))
+    s = _s()
+    try:
+        s.add(PendingQuestion(id=pid, conversation_id=conversation_id, question=question, language=language,
+                              status="pending", created_at=now, expires_at=exp))
+        s.commit()
+        return pid
     finally:
         s.close()
 
 
-def clear_everything(keep_media_folder: bool = True) -> dict:
-    """
-    Limpieza masiva. Útil para el Súper Admin:
-      - Órdenes
-      - Pendientes
-      - Ítems del menú
-      - Imágenes del menú (y archivos)
-      - Banners (y archivos)
-    Retorna un resumen por tipo.
-    """
-    res = {
-        "orders": clear_orders(),
-        "pending_questions": clear_pending_questions(),
-        "menu_items": clear_menu_items(),
-        "menu_images": clear_menu_images(),
-        "banner_images": clear_banner_images()
-    }
+def fetch_pending_questions() -> List[Dict[str, Any]]:
+    s = _s()
+    try:
+        rows = s.query(PendingQuestion).order_by(
+            PendingQuestion.created_at.desc()).all()
+        return [{"id": r.id, "conversation_id": r.conversation_id, "question": r.question, "language": r.language,
+                 "status": r.status, "answer_msg": r.answer_msg, "created_at": r.created_at, "expires_at": r.expires_at}
+                for r in rows]
+    finally:
+        s.close()
 
-    # Opcionalmente, limpiar también la carpeta media vacía (no recomendado en demo)
-    if not keep_media_folder:
-        try:
-            if os.path.isdir(MEDIA_DIR) and not os.listdir(MEDIA_DIR):
-                os.rmdir(MEDIA_DIR)
-        except Exception:
-            pass
 
-    return res
+def answer_pending_question(pending_id: str, status: str, message: Optional[str] = None) -> bool:
+    s = _s()
+    try:
+        r = s.query(PendingQuestion).get(pending_id)
+        if not r:
+            return False
+        r.status = status
+        if message:
+            r.answer_msg = message
+        s.commit()
+        return True
+    finally:
+        s.close()
+
+
+def autoapprove_expired_pendings(default_message_es="Aprobado por tiempo.", default_message_en="Approved due to timeout.") -> int:
+    now = dt.datetime.utcnow()
+    s = _s()
+    try:
+        rows = s.query(PendingQuestion).filter(
+            PendingQuestion.status == "pending",
+            PendingQuestion.expires_at.isnot(None),
+            PendingQuestion.expires_at < now
+        ).all()
+        cnt = 0
+        for r in rows:
+            r.status = "approved"
+            r.answer_msg = default_message_es if (
+                r.language or "es") == "es" else default_message_en
+            cnt += 1
+        s.commit()
+        return cnt
+    finally:
+        s.close()
+
+
+def export_orders_csv() -> str:
+    import csv
+    from io import StringIO
+    s = _s()
+    try:
+        rows = s.query(Order).order_by(Order.created_at.asc()).all()
+        buf = StringIO()
+        w = csv.writer(buf)
+        w.writerow(["id", "client_name", "phone", "delivery_type", "address", "pickup_eta_min", "payment_method",
+                   "items_json", "total", "currency", "status", "priority", "sla_deadline", "sla_breached", "created_at"])
+        for r in rows:
+            w.writerow([r.id, r.client_name, r.phone, r.delivery_type, r.address, r.pickup_eta_min, r.payment_method, r.items_json,
+                        f"{float(r.total or 0.0):.2f}", r.currency, r.status, r.priority,
+                        r.sla_deadline.isoformat() if r.sla_deadline else "", "1" if r.sla_breached else "0",
+                        r.created_at.isoformat() if r.created_at else ""])
+        return buf.getvalue()
+    finally:
+        s.close()
+
+
+def export_pendings_csv() -> str:
+    import csv
+    from io import StringIO
+    s = _s()
+    try:
+        rows = s.query(PendingQuestion).order_by(
+            PendingQuestion.created_at.asc()).all()
+        buf = StringIO()
+        w = csv.writer(buf)
+        w.writerow(["id", "conversation_id", "question", "language",
+                   "status", "answer_msg", "created_at", "expires_at"])
+        for r in rows:
+            w.writerow([r.id, r.conversation_id, r.question, r.language, r.status, r.answer_msg or "",
+                        r.created_at.isoformat() if r.created_at else "",
+                        r.expires_at.isoformat() if r.expires_at else ""])
+        return buf.getvalue()
+    finally:
+        s.close()

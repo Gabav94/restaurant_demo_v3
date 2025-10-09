@@ -7,198 +7,154 @@ Created on Thu Sep 25 10:37:32 2025
 
 from __future__ import annotations
 import streamlit as st
-from uuid import uuid4
-from streamlit_webrtc import webrtc_streamer, WebRtcMode
-import av
-import numpy as np
-
 from backend.config import get_config
-from backend.db import (
-    fetch_menu, fetch_menu_images, create_order_from_chat_ready
-)
-from backend.llm_chat import (
-    client_assistant_reply, extract_client_info, ensure_all_required_present,
-    parse_items_from_chat, client_voice_to_text
-)
-from backend.utils import (
-    menu_table_component, menu_gallery_component, render_auto_carousel
-)
+from backend.db import ensure_db_and_seed, fetch_menu, fetch_menu_images, create_order_from_chat_ready
+from backend.utils import render_auto_carousel
+from backend.llm_chat import llm_reply, extract_fields_from_text
 
 st.set_page_config(page_title="Cliente", page_icon="💬", layout="wide")
 
 st.markdown("""
 <style>
-@media (max-width: 900px){
-  .block-container{padding-top:0.5rem;padding-bottom:3rem;}
-}
-.sticky-menu { position: sticky; top: 0; z-index: 9; background: white; padding: .4rem 0 .6rem 0; border-bottom: 1px solid #eee; }
-.carousel-wrap { margin-bottom: .5rem; }
-.chat-wrap { height: 74vh; max-height: 760px; overflow-y: auto; padding: .5rem .25rem; border-radius: 12px; border: 1px solid #eee; background: #fafafa; }
-.user-bubble .stMarkdown p{background:#DCF8C6; padding:.6rem .8rem; border-radius:1rem;}
-.bot-bubble .stMarkdown p{background:#FFFFFF; padding:.6rem .8rem; border-radius:1rem; border:1px solid #eee;}
+.chat-box{border:1px solid #eee;border-radius:12px;padding:10px;height:380px;overflow-y:auto;background:#fafafa}
+.msg{margin:6px 0;max-width:80%;}
+.user{background:#DCF8C6;align-self:flex-end;border-radius:14px 14px 0 14px;padding:8px 10px;display:inline-block;}
+.bot{background:#fff;border-radius:14px 14px 14px 0;padding:8px 10px;display:inline-block;border:1px solid #eee;}
 </style>
 """, unsafe_allow_html=True)
 
 
-def _t(lang):
-    return (lambda es, en: es if lang == "es" else en)
+def _t(lang): return (lambda es, en: es if lang == "es" else en)
+
+
+def _menu_text(menu, currency):
+    lines = []
+    for m in menu:
+        lines.append(f"- {m['name']} ({currency} {m['price']:.2f}): {m['description']} [{m.get('special_notes', '')}]")
+    return "\n".join(lines)
+
+
+def _missing_fields(ci: dict, lang: str) -> list[str]:
+    need = []
+    if not ci.get("name"):
+        need.append("nombre" if lang == "es" else "name")
+    if not ci.get("phone"):
+        need.append("teléfono" if lang == "es" else "phone")
+    if not ci.get("delivery_type"):
+        need.append("entrega/retiro" if lang == "es" else "delivery/pickup")
+    if ci.get("delivery_type") == "delivery" and not ci.get("address"):
+        need.append("dirección" if lang == "es" else "address")
+    if not ci.get("payment_method"):
+        need.append("método de pago" if lang == "es" else "payment method")
+    return need
 
 
 def main():
+    ensure_db_and_seed()  # asegura migración + seed
     cfg = get_config()
     lang = cfg.get("language", "es")
     t = _t(lang)
+    menu = fetch_menu()
+    imgs = fetch_menu_images()
     currency = cfg.get("currency", "USD")
 
-    st.title(t("💬 Cliente", "💬 Client"))
+    st.title("💬 " + ("Cliente" if lang == "es" else "Client"))
+    if imgs:
+        render_auto_carousel(imgs, height_px=160, interval_sec=4)
 
-    # ---- Carrusel SOLO con imágenes subidas por el restaurante ----
-    real_menu_imgs = fetch_menu_images()
-    with st.container():
-        st.markdown('<div class="carousel-wrap">', unsafe_allow_html=True)
-        if real_menu_imgs:
-            render_auto_carousel(real_menu_imgs, height_px=180, interval_sec=4)
+    col_menu, col_chat = st.columns([1.1, 1.2])
+    with col_menu:
+        st.subheader(t("Menú", "Menu"))
+        if menu:
+            for m in menu:
+                st.markdown(f"**{m['name']}** · {currency} {m['price']:.2f}\n\n_{
+                            m['description']}_  \n`{m.get('special_notes', '')}`")
         else:
-            st.info(t("El restaurante aún no ha cargado imágenes de su menú.",
-                    "The restaurant has not uploaded menu images yet."))
-        st.markdown('</div>', unsafe_allow_html=True)
+            st.info(t("Sin ítems aún. El restaurante debe cargar el menú.",
+                    "No items yet. Restaurant must upload the menu."))
 
-    menu = fetch_menu()
-    if not menu:
-        st.warning(t("El restaurante aún no ha cargado su menú.",
-                   "The restaurant has not uploaded its menu yet."))
-        return
+    with col_chat:
+        st.subheader(t("Chat", "Chat"))
+        if "msgs" not in st.session_state:
+            st.session_state.msgs = []
+        if "client_info" not in st.session_state:
+            st.session_state.client_info = {}
+        if "order_ready" not in st.session_state:
+            st.session_state.order_ready = False
 
-    if "conv_id" not in st.session_state:
-        st.session_state.conv_id = uuid4().hex
-    if "conv" not in st.session_state:
-        st.session_state.conv = [{"role": "assistant", "content": t(
-            "Gracias por comunicarte con nosotros. ¿Cómo podemos ayudarte?",
-            "Thanks for contacting us. How can we help?"
-        )}]
-    if "client_info" not in st.session_state:
-        st.session_state.client_info = {}
-    if "order_items" not in st.session_state:
-        st.session_state.order_items = []
-
-    # ---- Menú sticky (arriba) ----
-    with st.container():
-        st.markdown('<div class="sticky-menu">', unsafe_allow_html=True)
-        view = st.radio(t("Visualización del menú", "Menu view"), [
-                        t("Tabla", "Table"), t("Imágenes", "Images")], horizontal=True)
-        if view == t("Tabla", "Table"):
-            menu_table_component(menu, lang)
-        else:
-            menu_gallery_component(menu, lang, images=None, columns=3)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ----- Chat fijo + mic -----
-    st.subheader("💬 Chat")
-    with st.container():
-        st.markdown('<div class="chat-wrap">', unsafe_allow_html=True)
-        for m in st.session_state.conv:
-            klass = "user-bubble" if m["role"] == "user" else "bot-bubble"
-            with st.chat_message(m["role"]):
-                st.markdown(f'<div class="{klass}">{
-                            m["content"]}</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    rtc_cfg = {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-    media_constraints = {"audio": True, "video": False}
-
-    class AudioProcessor:
-        def __init__(self) -> None:
-            self._buf = []
-
-        def recv(self, frame: av.AudioFrame):
-            self._buf.append(frame.to_ndarray())
-            return frame
-
-        def pop(self):
-            if not self._buf:
-                return None
-            import numpy as np
-            pcm = np.concatenate(self._buf, axis=1).tobytes()
-            self._buf = []
-            return pcm
-
-    webrtc_ctx = webrtc_streamer(
-        key="client-ptt",
-        mode=WebRtcMode.SENDONLY,
-        rtc_configuration=rtc_cfg,
-        media_stream_constraints=media_constraints,
-        audio_receiver_size=256,
-        async_processing=True,
-        audio_processor_factory=AudioProcessor,
-    )
-
-    cols = st.columns([1, 1])
-    with cols[0]:
-        use_audio = st.button(t("🎙️ Usar último audio", "🎙️ Use last audio"))
-    with cols[1]:
-        user_msg = st.chat_input(
-            t("Escribe tu mensaje…", "Type your message…"))
-
-    if use_audio and webrtc_ctx and webrtc_ctx.audio_processor:
-        pcm = webrtc_ctx.audio_processor.pop()
-        if pcm:
-            text = client_voice_to_text(pcm, cfg)
-            if text:
-                user_msg = (user_msg + " " if user_msg else "") + text
-
-    if user_msg:
-        st.session_state.conv.append({"role": "user", "content": user_msg})
-        reply = client_assistant_reply(
-            st.session_state.conv, menu, cfg, conversation_id=st.session_state.conv_id)
-        st.session_state.conv.append({"role": "assistant", "content": reply})
-        # extracción robusta de datos e ítems
-        info = extract_client_info(st.session_state.conv, lang)
-        st.session_state.client_info.update(
-            {k: v for k, v in info.items() if v})
-        st.session_state.order_items = parse_items_from_chat(
-            st.session_state.conv, menu, cfg)
-        st.rerun()
-
-    st.write("---")
-    missing = ensure_all_required_present(
-        st.session_state.get("client_info", {}), lang)
-    label_map_es = {"name": "nombre", "phone": "teléfono", "delivery_type": "tipo de entrega",
-                    "payment_method": "método de pago", "address": "dirección", "pickup_eta_min": "tiempo de retiro (min)"}
-    label_map_en = {"name": "name", "phone": "phone", "delivery_type": "delivery type",
-                    "payment_method": "payment method", "address": "address", "pickup_eta_min": "pickup ETA (min)"}
-    lm = label_map_es if lang == "es" else label_map_en
-    miss_str = ", ".join([lm[m] for m in missing])
-
-    left, right = st.columns([2, 1])
-    with left:
-        if missing:
-            st.warning((f"Faltan datos para confirmar: {
-                       miss_str}." if lang == "es" else f"Missing fields: {miss_str}."))
-        else:
-            st.success(t("Tenemos todos los datos. Puedes confirmar.",
-                       "All data present. You can confirm."))
-            if st.session_state.get("order_items"):
-                st.caption(t("Items detectados: ", "Detected items: ") + "; ".join(
-                    [f"{i['name']} x{i['qty']}" for i in st.session_state["order_items"]]))
-
-    with right:
-        if st.button(t("✅ Confirmar pedido", "✅ Confirm order")):
-            if missing:
-                st.error((f"No se puede confirmar. Falta: {
-                         miss_str}" if lang == "es" else f"Cannot confirm. Missing: {miss_str}"))
+        st.markdown('<div class="chat-box">', unsafe_allow_html=True)
+        for role, txt in st.session_state.msgs:
+            if role == "user":
+                st.markdown(f'<div class="msg" style="display:flex;justify-content:flex-end;"><div class="user">{
+                            txt}</div></div>', unsafe_allow_html=True)
             else:
-                order = create_order_from_chat_ready(
-                    client=st.session_state.get("client_info", {}),
-                    items=st.session_state.get("order_items", []),
-                    currency=currency,
-                )
-                st.session_state.conv.append({"role": "assistant", "content": t(
-                    "Pedido confirmado. ¡Lo estamos preparando! 🚗💨 si es a domicilio, o listo según tu hora de retiro.",
-                    "Order confirmed. We’re on it! 🚗💨 for delivery, or ready at your pickup time."
-                )})
-                st.success(t("¡Pedido confirmado!", "Order confirmed!"))
-                st.rerun()
+                st.markdown(f'<div class="msg"><div class="bot">{
+                            txt}</div></div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
+        usr = st.text_input(t("Gracias por comunicarte con nosotros. ¿Cómo podemos ayudarte?",
+                              "Thanks for reaching us. How can we help?"), key="user_txt")
+        send = st.button(t("Enviar", "Send"))
+        if send and usr.strip():
+            st.session_state.msgs.append(("user", usr.strip()))
+            # extracción ligera de campos
+            found = extract_fields_from_text(usr)
+            st.session_state.client_info.update(
+                {k: v for k, v in found.items() if v})
 
-if __name__ == "__main__":
-    main()
+            # respuesta LLM
+            menu_text = _menu_text(menu, currency)
+            try:
+                bot = llm_reply(usr.strip(), menu_text)
+            except Exception as e:
+                bot = t("Error con el modelo. Intenta de nuevo.",
+                        "Model error. Try again.")
+            st.session_state.msgs.append(("assistant", bot))
+
+            # validación de “listo para confirmar”
+            missing = _missing_fields(st.session_state.client_info, lang)
+            if not missing:
+                # dar luz: listo para confirmación
+                st.session_state.msgs.append(("assistant", t(
+                    "Pedido listo para confirmación. Por favor, presiona el botón Confirmar Pedido.",
+                    "Order ready for confirmation. Please press the Confirm Order button."
+                )))
+                st.session_state.order_ready = True
+            else:
+                st.session_state.order_ready = False
+
+            st.rerun()
+
+        # Confirmar
+        if st.session_state.order_ready:
+            if st.button(t("Confirmar pedido", "Confirm order")):
+                ci = st.session_state.client_info
+                missing = _missing_fields(ci, lang)
+                if missing:
+                    st.warning(t("Faltan datos: ", "Missing: ") +
+                               ", ".join(missing))
+                else:
+                    # Para demo: construye items mínimos desde el chat (no NLU complejo aquí)
+                    # En producción extraerías ítems con un parser estructurado.
+                    items = []
+                    # Si el usuario mencionó algo del menú, arma un item base:
+                    # (demo) agregamos Hamburguesa 1u si no hay nada
+                    if not items:
+                        burger = next(
+                            (m for m in menu if "hamburguesa".lower() in m["name"].lower()), None)
+                        ref = burger or (menu[0] if menu else None)
+                        if ref:
+                            items = [{"id": ref["id"], "name": ref["name"], "qty": 1,
+                                      "unit_price": ref["price"], "currency": currency}]
+                    try:
+                        create_order_from_chat_ready(
+                            ci, items, currency=currency)
+                        st.success(
+                            t("¡Pedido confirmado!", "Order confirmed!"))
+                        st.session_state.msgs.append(("assistant", t(
+                            "¡Listo! Tu pedido estará listo en ~30 minutos (entrega) o según tu tiempo de retiro.",
+                            "Done! Your order will be ready in ~30 minutes (delivery) or according to your pickup time."
+                        )))
+                        st.session_state.order_ready = False
+                    except Exception as e:
+                        st.error(f"DB error: {e}")

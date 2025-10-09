@@ -1,8 +1,0 @@
-{
-  "language": "es",
-  "model": "gpt-4o-mini",
-  "temperature": 0.2,
-  "assistant_name": "RAIVA",
-  "tone": "Amable y profesional; breve, guiado.",
-  "currency": "USD"
-}
