@@ -22,8 +22,8 @@ from backend.db import create_pending_question
 
 
 def _get_llm(cfg: dict) -> ChatOpenAI:
-    key = dotenv_values().get("OPENAI_API_KEY")
-    # key = st.secrets("OPENAI_API_KEY")
+    # key = dotenv_values().get("OPENAI_API_KEY")
+    key = st.secrets("OPENAI_API_KEY")
     if not key:
         raise RuntimeError("Falta OPENAI_API_KEY en .env")
     model = cfg.get("model", "gpt-4o-mini")
