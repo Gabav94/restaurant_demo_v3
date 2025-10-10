@@ -11,7 +11,14 @@ import re
 from typing import List, Dict, Tuple
 import numpy as np
 from PIL import Image, ImageOps
-import cv2
+
+# Importar cv2 de forma defensiva (en Cloud puede no cargar)
+_cv2_ok = True
+try:
+    import cv2  # opencv-python-headless en Cloud
+except Exception as e:
+    _cv2_ok = False
+    cv2 = None
 
 try:
     import pytesseract
@@ -171,6 +178,9 @@ def parse_menu_image(file, lang: str = "es") -> List[Dict]:
     if not _TESS_AVAILABLE:
         raise RuntimeError(
             "Pytesseract no está disponible. Instala Tesseract OCR.")
+    # Si no hay cv2 ni pytesseract, devolvemos lista vacía sin romper la app
+    if not _cv2_ok or pytesseract is None:
+        return []
     tess_lang = _lang_to_tess(lang)
     pil = _load_image(file)
     img_bin = _enhance_for_ocr(pil)

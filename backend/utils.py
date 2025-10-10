@@ -16,19 +16,37 @@ import os
 from PIL import Image
 
 
+# def _img_to_base64(img_path: str) -> str | None:
+#     try:
+#         p = img_path
+#         if not os.path.isabs(p):
+#             p = os.path.abspath(p)
+#         if not os.path.isfile(p):
+#             return None
+#         im = Image.open(p).convert("RGB")
+#         buf = io.BytesIO()
+#         im.save(buf, format="PNG")
+#         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+#         return f"data:image/png;base64,{b64}"
+#     except Exception:
+#         return None
+
 def _img_to_base64(img_path: str) -> str | None:
     try:
         p = img_path
         if not os.path.isabs(p):
             p = os.path.abspath(p)
         if not os.path.isfile(p):
+            # Diagnóstico útil en Cloud
+            st.caption(f"⚠️ No existe la imagen: {p}")
             return None
         im = Image.open(p).convert("RGB")
         buf = io.BytesIO()
         im.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         return f"data:image/png;base64,{b64}"
-    except Exception:
+    except Exception as e:
+        st.caption(f"⚠️ No se pudo abrir la imagen: {img_path} · {e}")
         return None
 
 
@@ -166,13 +184,13 @@ def _image(img, **kwargs):
                 st.warning(f"No se pudo abrir la imagen: {img}")
                 return
             try:
-                return st.image(im, use_container_width=True, **{k: v for k, v in kwargs.items() if k != "use_container_width"})
+                return st.image(im, width='stretch', **{k: v for k, v in kwargs.items() if k != "width"})
             except TypeError:
                 return st.image(im, use_column_width=True)
         else:
             # objeto PIL/ndarray/bytes
             try:
-                return st.image(img, use_container_width=True, **{k: v for k, v in kwargs.items() if k != "use_container_width"})
+                return st.image(img, width='stretch', **{k: v for k, v in kwargs.items() if k != "width"})
             except TypeError:
                 return st.image(img, use_column_width=True)
     except Exception:
@@ -200,7 +218,7 @@ def menu_table_component(
         "Notas" if lang == "es" else "Notes": m.get("special_notes", ""),
     } for m in menu])
     try:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width='stretch', hide_index=True)
     except TypeError:
         st.dataframe(df)
 

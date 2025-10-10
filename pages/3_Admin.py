@@ -26,7 +26,7 @@ def _t(lang):
 
 def _image_compat(img):
     try:
-        st.image(img, use_container_width=True)
+        st.image(img, width='stretch')
     except TypeError:
         st.image(img, use_column_width=True)
 

@@ -20,7 +20,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 from backend.config import get_config
 
-DB_DIR = "data"
+# DB_DIR = "data"
+# MEDIA_DIR = os.path.join(DB_DIR, "media")
+# os.makedirs(MEDIA_DIR, exist_ok=True)
+# Ancla rutas a la raíz del proyecto (carpeta que contiene /backend)
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DB_DIR = os.path.join(ROOT_DIR, "data")
 MEDIA_DIR = os.path.join(DB_DIR, "media")
 os.makedirs(MEDIA_DIR, exist_ok=True)
 

@@ -10,21 +10,24 @@ import streamlit as st
 from backend.config import ensure_default_config, get_config, update_config
 from backend.db import ensure_db_and_seed
 
+ensure_db_and_seed()
+ensure_default_config()
+
 st.set_page_config(page_title="Restaurant AI Demo",
                    page_icon="🍽️", layout="wide")
 
 
 def _image_compat(img):
     try:
-        st.image(img, use_container_width=True)
+        st.image(img, width='stretch')
     except TypeError:
         st.image(img, use_column_width=True)
 
 
 def main():
     # Asegurar config y DB con seed
-    ensure_default_config()
-    ensure_db_and_seed()
+    # ensure_default_config()
+    # ensure_db_and_seed()
 
     cfg = get_config()
     lang = cfg.get("language", "es")
@@ -56,7 +59,11 @@ def main():
     with col2:
         st.subheader("Idioma / Language")
         new_lang = st.radio(
-            "", ["es", "en"], horizontal=True, index=0 if lang == "es" else 1)
+            "Idioma / Language",   # antes estaba vacío
+            options=["es", "en"],
+            index=0 if lang == "es" else 1,
+            horizontal=True
+        )
         if new_lang != lang:
             update_config({"language": new_lang})
             st.rerun()

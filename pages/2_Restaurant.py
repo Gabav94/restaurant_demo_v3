@@ -144,7 +144,7 @@ def main():
         st.subheader(t("Carga masiva (CSV/TXT) + OCR",
                      "Bulk upload (CSV/TXT) + OCR"))
         up = st.file_uploader(
-            t("Subir CSV/TXT", "Upload CSV/TXT"), type=["csv", "txt"])
+            t("Subir CSV/TXT", "Upload CSV/TXT"), type=["csv", "txt"], label_visibility="visible")
         if st.button(t("Procesar archivo", "Process file")) and up:
             try:
                 items = _parse_csv_or_txt(up)
