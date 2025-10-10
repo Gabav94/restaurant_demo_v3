@@ -1,15 +1,35 @@
-streamlit==1.37.1
-streamlit-webrtc==0.47.7
-av==12.3.0
-langchain==0.2.14
-langchain-openai==0.1.14
-openai==1.45.1
-sqlalchemy==2.0.35
-pandas==2.2.3
-python-dotenv==1.0.1
-pytesseract==0.3.10
-Pillow==10.4.0
-opencv-python==4.10.0.84
-numpy==1.26.4
-tiktoken==0.7.0
-requests==2.32.3
+# Core framework
+streamlit>=1.32.0
+streamlit-webrtc>=0.47.1
+streamlit-extras>=0.3.0
+langgraph>=0.2.25
+langchain>=0.3.0
+openai>=1.13.0
+python-dotenv>=1.0.0
+
+# Database & ORM
+sqlalchemy>=2.0.25
+alembic>=1.13.0
+
+# OCR & Image processing
+pytesseract>=0.3.10
+pillow>=10.0.0
+opencv-python>=4.9.0.80
+numpy>=1.26.4
+
+# Audio (speech to text / voice streaming)
+av>=11.0.0
+soundfile>=0.12.1
+pydub>=0.25.1
+
+# Utilities
+requests>=2.31.0
+python-multipart>=0.0.6
+tenacity>=8.2.3
+
+# CSV / TXT / File handling
+pandas>=2.2.0
+
+# Security & misc
+cryptography>=42.0.0
+tqdm>=4.66.1
