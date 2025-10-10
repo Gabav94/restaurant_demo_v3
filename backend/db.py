@@ -14,6 +14,7 @@ from typing import List, Dict, Optional
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, Float, DateTime, Boolean
 )
+from sqlalchemy import text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from PIL import Image, ImageDraw, ImageFont
 
@@ -95,13 +96,61 @@ class PendingQuestion(Base):
 Base.metadata.create_all(engine)
 
 
+def _colnames(table: str) -> set:
+    with engine.connect() as conn:
+        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        return {r[1] for r in rows}  # r[1] = name
+
+
+def _table_exists(table: str) -> bool:
+    with engine.connect() as conn:
+        try:
+            conn.execute(text(f"SELECT 1 FROM {table} LIMIT 1"))
+            return True
+        except Exception:
+            return False
+
+
+def ensure_schema():
+    with engine.begin() as conn:
+        # pending_questions
+        if not _table_exists("pending_questions"):
+            # crear tabla completa
+            conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS pending_questions (
+              id TEXT PRIMARY KEY,
+              conversation_id TEXT,
+              question TEXT,
+              language TEXT DEFAULT 'es',
+              status TEXT DEFAULT 'pending',
+              answer_msg TEXT,
+              created_at TIMESTAMP,
+              expires_at TIMESTAMP
+            )
+            """))
+        else:
+            cols = _colnames("pending_questions")
+            if "status" not in cols:
+                conn.execute(
+                    text("ALTER TABLE pending_questions ADD COLUMN status TEXT DEFAULT 'pending'"))
+            if "answer_msg" not in cols:
+                conn.execute(
+                    text("ALTER TABLE pending_questions ADD COLUMN answer_msg TEXT"))
+            if "expires_at" not in cols:
+                conn.execute(
+                    text("ALTER TABLE pending_questions ADD COLUMN expires_at TIMESTAMP"))
+
+
 def _s(): return SessionLocal()
 
 # --------- SEED / BANNERS ---------
 
 
+def _abs(p): return os.path.abspath(p)
+
+
 def _generate_banner(text: str, price: str, desc: str, filename: str):
-    path = os.path.join(MEDIA_DIR, filename)
+    path = _abs(os.path.join(MEDIA_DIR, filename))  # <-- absoluto
     if os.path.exists(path):
         return path
     # banner 1024x360
@@ -124,6 +173,7 @@ def _generate_banner(text: str, price: str, desc: str, filename: str):
 def ensure_db_and_seed():
     # crea tablas si no existen
     Base.metadata.create_all(engine)
+    ensure_schema()
     s = _s()
     try:
         # Seed de menú si está vacío
@@ -189,7 +239,7 @@ def delete_menu_item(item_id: int):
 def add_menu_image(uploaded_file) -> str:
     ext = os.path.splitext(uploaded_file.name)[1].lower() or ".png"
     fname = f"menu_{uuid.uuid4().hex}{ext}"
-    path = os.path.join(MEDIA_DIR, fname)
+    path = _abs(os.path.join(MEDIA_DIR, fname))  # <-- absoluto
     with open(path, "wb") as f:
         f.write(uploaded_file.getbuffer())
     s = _s()

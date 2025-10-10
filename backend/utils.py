@@ -9,16 +9,174 @@ from __future__ import annotations
 from typing import List, Dict, Callable, Optional
 import streamlit as st
 import pandas as pd
+import base64
+import uuid
+import io
+import os
+from PIL import Image
+
+
+def _img_to_base64(img_path: str) -> str | None:
+    try:
+        p = img_path
+        if not os.path.isabs(p):
+            p = os.path.abspath(p)
+        if not os.path.isfile(p):
+            return None
+        im = Image.open(p).convert("RGB")
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{b64}"
+    except Exception:
+        return None
+
+
+def render_js_carousel(
+    image_paths: list[str],
+    interval_ms: int = 5000,
+    aspect_ratio: float = 16/6,   # ancho/alto para banner; ajusta si quieres
+    key_prefix: str = "carousel",
+    show_dots: bool = True,
+):
+    """Renderiza un carrusel de imágenes con JS sin recargar la app."""
+    if not image_paths:
+        st.info("No hay imágenes para el carrusel.")
+        return
+
+    # Convierte a data URIs
+    data_uris = []
+    for p in image_paths:
+        b64 = _img_to_base64(p)
+        if b64:
+            data_uris.append(b64)
+
+    if not data_uris:
+        st.info("No se pudieron cargar las imágenes del carrusel.")
+        return
+
+    cid = f"c_{key_prefix}_{uuid.uuid4().hex[:8]}"
+    # CSS responsive: contenedor mantiene ratio; imagen cubre contenedor
+    dots_html = ""
+    if show_dots:
+        dots_html = "<div class='dots'>" + \
+            "".join(
+                [f"<span class='dot' data-idx='{i}'></span>" for i in range(len(data_uris))]) + "</div>"
+
+    html = f"""
+<div id="{cid}" class="carousel">
+  <div class="viewport">
+    {''.join([f'<img class="slide" src="{u}" loading="lazy" />' for u in data_uris])}
+  </div>
+  {dots_html}
+</div>
+
+<style>
+  #{cid}.carousel {{
+    width: 100%;
+    max-width: 1200px;
+    margin: .25rem auto 0 auto;
+  }}
+  #{cid} .viewport {{
+    position: relative;
+    width: 100%;
+    overflow: hidden;
+    border-radius: 12px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+  }}
+  /* Mantener relación de aspecto con padding hack */
+  #{cid} .viewport::before {{
+    content: "";
+    display: block;
+    padding-top: {100/aspect_ratio:.4f}%;
+  }}
+  #{cid} .viewport .slide {{
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: none;
+  }}
+  #{cid} .viewport .slide.active {{
+    display: block;
+  }}
+  #{cid} .dots {{
+    display: flex; gap: 8px; justify-content: center; align-items: center;
+    margin-top: .5rem;
+  }}
+  #{cid} .dot {{
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #d0d0d0; cursor: pointer;
+  }}
+  #{cid} .dot.active {{
+    background: #4a90e2;
+  }}
+  @media (max-width: 768px) {{
+    #{cid}.carousel {{ max-width: 100%; }}
+  }}
+</style>
+
+<script>
+  (function() {{
+    const root = document.getElementById("{cid}");
+    if (!root) return;
+    const slides = Array.from(root.querySelectorAll(".slide"));
+    const dots = Array.from(root.querySelectorAll(".dot"));
+    let idx = 0;
+    function show(i) {{
+      slides.forEach((el, k) => el.classList.toggle("active", k===i));
+      dots.forEach((el, k) => el.classList.toggle("active", k===i));
+    }}
+    function next() {{
+      idx = (idx + 1) % slides.length;
+      show(idx);
+    }}
+    if (slides.length) {{
+      show(0);
+    }}
+    let timer = setInterval(next, {interval_ms});
+    // dots click
+    dots.forEach(d => {{
+      d.addEventListener('click', () => {{
+        const i = parseInt(d.getAttribute('data-idx'));
+        idx = i; show(idx);
+        clearInterval(timer);
+        timer = setInterval(next, {interval_ms});
+      }});
+    }});
+  }})();
+</script>
+    """
+    st.components.v1.html(html, height=int(700/aspect_ratio), scrolling=False)
 
 
 def _image(img, **kwargs):
     try:
-        return st.image(img, use_container_width=True, **{k: v for k, v in kwargs.items() if k != "use_container_width"})
-    except TypeError:
-        try:
-            return st.image(img, use_column_width=True, **{k: v for k, v in kwargs.items() if k != "use_container_width"})
-        except TypeError:
-            return st.image(img)
+        # Si es string (ruta), valida existencia y usa PIL para abrir
+        if isinstance(img, str):
+            p = img
+            if not os.path.isabs(p):
+                p = os.path.abspath(p)
+            if not os.path.isfile(p):
+                st.warning(f"No se encontró la imagen: {img}")
+                return
+            try:
+                im = Image.open(p)
+            except Exception:
+                st.warning(f"No se pudo abrir la imagen: {img}")
+                return
+            try:
+                return st.image(im, use_container_width=True, **{k: v for k, v in kwargs.items() if k != "use_container_width"})
+            except TypeError:
+                return st.image(im, use_column_width=True)
+        else:
+            # objeto PIL/ndarray/bytes
+            try:
+                return st.image(img, use_container_width=True, **{k: v for k, v in kwargs.items() if k != "use_container_width"})
+            except TypeError:
+                return st.image(img, use_column_width=True)
+    except Exception:
+        st.warning("No se pudo renderizar la imagen.")
 
 
 def _button(label: str, key: Optional[str] = None):

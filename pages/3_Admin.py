@@ -14,6 +14,8 @@ from backend.db import (
     reset_everything, ensure_db_and_seed, fetch_menu_banners
 )
 from backend.faq import clear_faq
+from backend.utils import render_js_carousel
+import time
 
 st.set_page_config(page_title="Admin (Super)", page_icon="⚙️", layout="wide")
 
@@ -27,6 +29,44 @@ def _image_compat(img):
         st.image(img, use_container_width=True)
     except TypeError:
         st.image(img, use_column_width=True)
+
+
+def carousel(images: list[str], key_prefix: str, lang: str, interval_sec: int = 5):
+    if "carousel_state" not in st.session_state:
+        st.session_state.carousel_state = {}
+    state = st.session_state.carousel_state.setdefault(
+        key_prefix, {"idx": 0, "on": True})
+
+    # Toggle y avance
+    colA, colB = st.columns([1, 3])
+    with colA:
+        state["on"] = st.toggle(
+            "⏯️ Auto", value=state["on"], key=f"{key_prefix}_auto")
+    with colB:
+        st.caption("Avanza cada 5s" if lang == "es" else "Advances every 5s")
+
+    if images:
+        from backend.utils import _image  # usa tu helper
+        _image(images[state["idx"]])
+
+        # Controles manuales
+        c1, c2, c3 = st.columns(3)
+        if c1.button("⏮️", key=f"{key_prefix}_prev"):
+            state["idx"] = (state["idx"]-1) % len(images)
+            st.rerun()
+        if c3.button("⏭️", key=f"{key_prefix}_next"):
+            state["idx"] = (state["idx"]+1) % len(images)
+            st.rerun()
+
+        # Autoavance simple por refresh
+        if state["on"]:
+            # Inyecta refresh a los 5s SIN tocar toda la app (solo recarga la página)
+            st.markdown(
+                f"<meta http-equiv='refresh' content='{interval_sec}'>",
+                unsafe_allow_html=True
+            )
+            # al volver a correr, avanzamos índice
+            state["idx"] = (state["idx"]+1) % len(images)
 
 
 def main():
@@ -69,9 +109,15 @@ def main():
         st.markdown(t("**Banners del menú**", "**Menu banners**"))
         banners = fetch_menu_banners()
         if banners:
-            _image_compat(banners[0])
-        st.caption(t("Los banners por defecto se generan automáticamente en el primer arranque.",
-                   "Default banners are auto-created on first run."))
+            # _image_compat(banners[0])
+            # carousel(banners, key_prefix="admin_banners",
+            #          lang=lang, interval_sec=5)
+            render_js_carousel(banners, interval_ms=5000, aspect_ratio=16 /
+                               6, key_prefix="admin_banners", show_dots=True)
+
+        else:
+            st.caption(t("Los banners por defecto se generan automáticamente en el primer arranque.",
+                         "Default banners are auto-created on first run."))
 
     st.write("---")
     st.subheader(t("Limpieza de datos (uso con cuidado)",
