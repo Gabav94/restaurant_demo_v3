@@ -6,7 +6,7 @@ langgraph>=0.2.25
 langchain>=0.3.0
 openai>=1.13.0
 python-dotenv>=1.0.0
-langchain_openai
+langchain-openai
 cv2
 
 # Database & ORM
