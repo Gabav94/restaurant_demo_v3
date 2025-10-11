@@ -8,10 +8,14 @@ Created on Thu Sep 25 10:36:48 2025
 from __future__ import annotations
 import streamlit as st
 from backend.config import ensure_default_config, get_config, update_config
-from backend.db import ensure_db_and_seed
+from backend.db import ensure_db_and_seed, normalize_media_records
 
 ensure_db_and_seed()
 ensure_default_config()
+try:
+    normalize_media_records()
+except Exception:
+    pass
 
 st.set_page_config(page_title="Restaurant AI Demo",
                    page_icon="🍽️", layout="wide")

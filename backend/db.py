@@ -175,6 +175,36 @@ def _generate_banner(text: str, price: str, desc: str, filename: str):
     return path
 
 
+def normalize_media_records() -> tuple[int, int]:
+    """
+    - Reemplaza backslashes por slashes.
+    - Reancora cada imagen a MEDIA_DIR usando basename.
+    - Si el archivo no existe físicamente, borra la fila.
+    Devuelve: (actualizadas, eliminadas)
+    """
+    s = _s()
+    changed = 0
+    deleted = 0
+    try:
+        rows = s.query(MenuImage).all()
+        for r in rows:
+            raw = (r.path or "").replace("\\", "/")
+            base = os.path.basename(raw)
+            abs_guess = _abs(os.path.join(MEDIA_DIR, base))
+            if os.path.isfile(abs_guess):
+                if r.path != abs_guess:
+                    r.path = abs_guess
+                    changed += 1
+            else:
+                # archivo no existe en el filesystem -> fila huérfana
+                s.delete(r)
+                deleted += 1
+        s.commit()
+        return changed, deleted
+    finally:
+        s.close()
+
+
 def ensure_db_and_seed():
     # crea tablas si no existen
     Base.metadata.create_all(engine)
@@ -205,6 +235,11 @@ def ensure_db_and_seed():
             s.add_all([BannerImage(path=p1), BannerImage(
                 path=p2), BannerImage(path=p3)])
             s.commit()
+        # Al finalizar seed, normalizamos/limpiamos índices de media
+        try:
+            normalize_media_records()
+        except Exception:
+            pass
     finally:
         s.close()
 
@@ -257,6 +292,11 @@ def add_menu_image(uploaded_file) -> str:
 
 
 def fetch_menu_images() -> List[str]:
+    # Normaliza/limpia antes de devolver
+    try:
+        normalize_media_records()
+    except Exception:
+        pass
     s = _s()
     try:
         rows = s.query(MenuImage).order_by(MenuImage.created_at.desc()).all()

@@ -227,7 +227,7 @@ def main():
                 t("SLA", "SLA"): "⚠️" if o["sla_breached"] else "✅",
             } for o in orders])
             try:
-                st.dataframe(df, hide_index=True, use_container_width=True)
+                st.dataframe(df, hide_index=True, width='stretch')
             except TypeError:
                 st.dataframe(df, hide_index=True)
             with st.expander(t("Cambiar estado", "Change status")):

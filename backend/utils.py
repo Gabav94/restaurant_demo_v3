@@ -50,6 +50,19 @@ def _img_to_base64(img_path: str) -> str | None:
         return None
 
 
+def _img_to_base64_quiet(img_path: str) -> str | None:
+    try:
+        p = img_path if os.path.isabs(img_path) else os.path.abspath(img_path)
+        if not os.path.isfile(p):
+            return None
+        im = Image.open(p).convert("RGB")
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:
+        return None
+
+
 def render_js_carousel(
     image_paths: list[str],
     interval_ms: int = 5000,
@@ -64,15 +77,17 @@ def render_js_carousel(
 
     # Convierte a data URIs
     data_uris = []
+    missing = 0
     for p in image_paths:
-        b64 = _img_to_base64(p)
+        b64 = _img_to_base64_quiet(p)
         if b64:
             data_uris.append(b64)
 
     if not data_uris:
         st.info("No se pudieron cargar las imágenes del carrusel.")
         return
-
+    elif missing > 0:
+        st.caption(f"Se omitieron {missing} imagen(es) no disponibles.")
     cid = f"c_{key_prefix}_{uuid.uuid4().hex[:8]}"
     # CSS responsive: contenedor mantiene ratio; imagen cubre contenedor
     dots_html = ""
