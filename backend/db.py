@@ -177,7 +177,7 @@ def _generate_banner(text: str, price: str, desc: str, filename: str):
 
 def normalize_media_records() -> tuple[int, int]:
     """
-    - Reemplaza backslashes por slashes.
+    - Reemplaza backslashes por slashes. Cuida en Cloud
     - Reancora cada imagen a MEDIA_DIR usando basename.
     - Si el archivo no existe físicamente, borra la fila.
     Devuelve: (actualizadas, eliminadas)
