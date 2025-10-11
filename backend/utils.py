@@ -66,9 +66,11 @@ def _img_to_base64_quiet(img_path: str) -> str | None:
 def render_js_carousel(
     image_paths: list[str],
     interval_ms: int = 5000,
-    aspect_ratio: float = 16/6,   # ancho/alto para banner; ajusta si quieres
+    aspect_ratio: float = 16/6,   # ancho/alto
     key_prefix: str = "carousel",
     show_dots: bool = True,
+    # <-- NUEVO: altura fija por defecto (más alto en móvil)
+    height_px: int | None = 420,
 ):
     """Renderiza un carrusel de imágenes con JS sin recargar la app."""
     if not image_paths:
@@ -82,14 +84,16 @@ def render_js_carousel(
         b64 = _img_to_base64_quiet(p)
         if b64:
             data_uris.append(b64)
+        else:
+            missing += 1
 
     if not data_uris:
-        st.info("No se pudieron cargar las imágenes del carrusel.")
+        st.info("No se pudieron cargar imágenes del carrusel.")
         return
     elif missing > 0:
         st.caption(f"Se omitieron {missing} imagen(es) no disponibles.")
+
     cid = f"c_{key_prefix}_{uuid.uuid4().hex[:8]}"
-    # CSS responsive: contenedor mantiene ratio; imagen cubre contenedor
     dots_html = ""
     if show_dots:
         dots_html = "<div class='dots'>" + \
@@ -116,12 +120,13 @@ def render_js_carousel(
     overflow: hidden;
     border-radius: 12px;
     box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+    height: {height_px if height_px else 'auto'}px;  /* altura fija si se pasa */
   }}
-  /* Mantener relación de aspecto con padding hack */
+  /* Si NO se define height fija, mantenemos ratio con padding (fallback) */
   #{cid} .viewport::before {{
     content: "";
-    display: block;
-    padding-top: {100/aspect_ratio:.4f}%;
+    display: {"none" if height_px else "block"};
+    padding-top: {0 if height_px else f"{100/aspect_ratio:.4f}%"};
   }}
   #{cid} .viewport .slide {{
     position: absolute;
@@ -146,6 +151,7 @@ def render_js_carousel(
   }}
   @media (max-width: 768px) {{
     #{cid}.carousel {{ max-width: 100%; }}
+    #{cid} .viewport {{ height: {int((height_px or 420)*0.9)}px; }}
   }}
 </style>
 
@@ -168,7 +174,6 @@ def render_js_carousel(
       show(0);
     }}
     let timer = setInterval(next, {interval_ms});
-    // dots click
     dots.forEach(d => {{
       d.addEventListener('click', () => {{
         const i = parseInt(d.getAttribute('data-idx'));
@@ -180,7 +185,9 @@ def render_js_carousel(
   }})();
 </script>
     """
-    st.components.v1.html(html, height=int(700/aspect_ratio), scrolling=False)
+    # altura del componente: si usamos height_px, lo respetamos; si no, calculamos por ratio
+    comp_height = height_px or int(900/aspect_ratio)
+    st.components.v1.html(html, height=comp_height + 60, scrolling=False)
 
 
 def _image(img, **kwargs):

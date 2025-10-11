@@ -113,7 +113,7 @@ def main():
             # carousel(banners, key_prefix="admin_banners",
             #          lang=lang, interval_sec=5)
             render_js_carousel(banners, interval_ms=5000, aspect_ratio=16 /
-                               6, key_prefix="admin_banners", show_dots=True)
+                               6, key_prefix="admin_banners", show_dots=True, height_px=420)
 
         else:
             st.caption(t("Los banners por defecto se generan automáticamente en el primer arranque.",

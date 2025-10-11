@@ -11,8 +11,9 @@ import json
 import uuid
 import datetime as dt
 from typing import List, Dict, Optional
+from datetime import datetime, timezone
 from sqlalchemy import (
-    create_engine, Column, Integer, String, Text, Float, DateTime, Boolean
+    create_engine, Column, Integer, String, Text, Float, DateTime, Boolean, and_
 )
 from sqlalchemy import text
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -386,16 +387,53 @@ def update_order_status(order_id: str, new_status: str):
         s.close()
 
 
-def bump_priorities_if_sla_missed():
-    now = dt.datetime.utcnow()
+def bump_priorities_if_sla_missed() -> int:
+    """
+    Si la orden no está 'delivered' y (ahora > sla_deadline), marcar sla_breached=True
+    y subir priority=1. Devuelve cuántas se actualizaron.
+    Defensivo: ignora filas sin sla_deadline o sin cambios.
+    """
     s = _s()
+    updated = 0
     try:
-        rows = s.query(Order).all()
-        for o in rows:
-            if o.status != "delivered" and o.sla_deadline and now > o.sla_deadline:
-                o.sla_breached = True
-                o.priority = 1
-        s.commit()
+        now = datetime.now(timezone.utc)
+        # Traer SOLO lo necesario
+        orders = s.query(Order).filter(Order.status != "delivered").all()
+        for o in orders:
+            try:
+                if not getattr(o, "sla_deadline", None):
+                    continue
+                # normaliza tz si viniera naive
+                dd = o.sla_deadline
+                if dd.tzinfo is None:
+                    dd = dd.replace(tzinfo=timezone.utc)
+                if now > dd:
+                    # breach
+                    new_priority = 1
+                    changed = False
+                    if getattr(o, "priority", None) != new_priority:
+                        o.priority = new_priority
+                        changed = True
+                    if not getattr(o, "sla_breached", False):
+                        o.sla_breached = True
+                        changed = True
+                    if changed:
+                        updated += 1
+            except Exception:
+                # ignora filas problemáticas sin romper toda la transacción
+                continue
+        if updated:
+            s.commit()
+        else:
+            s.rollback()
+        return updated
+    except Exception:
+        # en caso de error general, no reventar la app
+        try:
+            s.rollback()
+        except Exception:
+            pass
+        return 0
     finally:
         s.close()
 
