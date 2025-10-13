@@ -273,6 +273,7 @@ Created on Thu Sep 25 10:37:32 2025
 # if __name__ == "__main__":
 #     main()
 
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 import streamlit as st
 from uuid import uuid4
@@ -283,8 +284,7 @@ import numpy as np
 from backend.utils import render_js_carousel, menu_table_component
 from backend.config import get_config
 from backend.db import (
-    fetch_menu, fetch_menu_banners, create_order_from_chat_ready,
-    fetch_menu_images
+    fetch_menu, create_order_from_chat_ready, fetch_menu_images
 )
 from backend.llm_chat import (
     client_assistant_reply, extract_client_info, ensure_all_required_present,
@@ -296,31 +296,47 @@ from backend.llm_chat import (
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Cliente", page_icon="💬", layout="wide")
 
-# CSS para layout tipo WhatsApp (chat sin título + input fijo abajo)
+# CSS: chat estilo WhatsApp con avatares, azul (bot) e verde (cliente)
 st.markdown("""
 <style>
-/* Caja de chat con scroll interno */
 .chat-box {
-  border: 1px solid #eee; border-radius: 12px;
+  border: 1px solid var(--secondary-background-color, #eee);
+  border-radius: 12px;
   padding: 10px 12px; height: 52vh; overflow-y: auto;
-  background: #fafafa;
-  display: flex; flex-direction: column; gap: 6px;
+  background: var(--background-color);
+  display: flex; flex-direction: column; gap: 8px;
 }
-/* Burbujas estilo WhatsApp */
-.msg-user { 
-  align-self: flex-end;
-  background:#DCF8C6; color:#222; padding:10px 12px; 
-  border-radius:14px; margin:2px 0; max-width:88%;
+.msg-row { display: flex; align-items: flex-end; gap: 8px; }
+.msg-row.left  { justify-content: flex-start; }
+.msg-row.right { justify-content: flex-end; }
+
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px; color: #fff; user-select: none;
 }
-.msg-bot  { 
-  align-self: flex-start;
-  background:#ffffff; color:#222; padding:10px 12px; 
-  border-radius:14px; margin:2px 0; max-width:88%; border:1px solid #eee; 
+.avatar-bot  { background: #1f6feb; }   /* azul */
+.avatar-user { background: #22c55e; }   /* verde */
+
+.bubble {
+  max-width: 88%;
+  padding: 10px 12px; border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06);
+  color: #0f172a; line-height: 1.35;
+  border: 1px solid rgba(0,0,0,0.06);
+  word-wrap: break-word; white-space: pre-wrap;
 }
-/* Pie con input */
+.bubble.bot  { background: #e6f0ff; border-color: #cfe2ff; }
+.bubble.user { background: #eafcf1; border-color: #ccf5db; }
+
+.header-chip {
+  font-size: 11px; font-weight: 600; margin-bottom: 4px;
+  color: #0b3d91;
+}
+
 .input-row { position: sticky; bottom: 0; background: #fff; padding-top: 8px; }
 @media (max-width: 768px){
-  .chat-box { height: 54vh; }
+  .chat-box { height: 56vh; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -331,40 +347,45 @@ def _t(lang: str):
 
 
 def main():
-    # Config y estado base
     cfg = get_config()
     lang = cfg.get("language", "es")
     t = _t(lang)
     currency = cfg.get("currency", "USD")
+    assistant_name = cfg.get(
+        "assistant_name", "Asistente" if lang == "es" else "Assistant")
 
     st.title(t("💬 Cliente", "💬 Client"))
 
-    # Carga de menú
+    # Menú
     menu = fetch_menu()
     if not menu:
         st.warning(t("El restaurante aún no ha cargado su menú.",
                      "The restaurant has not uploaded its menu yet."))
         return
 
-    # Estado de conversación
-    if "conv_id" not in st.session_state:
-        st.session_state.conv_id = uuid4().hex
-    if "conv" not in st.session_state:
-        st.session_state.conv = [{
+    # Estado
+    ss = st.session_state
+    if "conv_id" not in ss:
+        ss.conv_id = uuid4().hex
+    if "conv" not in ss:
+        ss.conv = [{
             "role": "assistant",
-            "content": t(
-                "Gracias por comunicarte con nosotros. ¿Cómo podemos ayudarte?",
-                "Thanks for contacting us. How can we help?"
-            )
+            "content": t("Gracias por comunicarte con nosotros. ¿Cómo podemos ayudarte?",
+                         "Thanks for contacting us. How can we help?")
         }]
-    if "client_info" not in st.session_state:
-        st.session_state.client_info = {}
-    if "order_items" not in st.session_state:
-        st.session_state.order_items = []
-    if "pending_user_input" not in st.session_state:
-        st.session_state.pending_user_input = ""
+    if "client_info" not in ss:
+        ss.client_info = {}
+    if "order_items" not in ss:
+        ss.order_items = []
+    if "pending_user_input" not in ss:
+        ss.pending_user_input = ""
+    # Fase para preguntar datos luego de tener pedido (y total)
+    if "collecting_info" not in ss:
+        ss.collecting_info = False
+    if "next_field_idx" not in ss:
+        ss.next_field_idx = 0
 
-    # Visualización: tabla o imágenes
+    # Vista: tabla o imágenes
     view = st.radio(
         t("Visualización del menú", "Menu view"),
         [t("Tabla", "Table"), t("Imágenes", "Images")],
@@ -373,9 +394,7 @@ def main():
 
     col_menu, col_chat = st.columns([1, 1])
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Columna izquierda: Menú (Tabla o Carrusel de Imágenes)
-    # ──────────────────────────────────────────────────────────────────────────
+    # ── Menú (izquierda)
     with col_menu:
         st.subheader(t("📖 Menú", "📖 Menu"))
         if view == t("Tabla", "Table"):
@@ -386,30 +405,39 @@ def main():
                 st.info(t("No hay imágenes cargadas aún.",
                         "No images uploaded yet."))
             else:
-                # Carrusel más alto en móvil/escritorio
                 render_js_carousel(
-                    gallery,
-                    interval_ms=5000,
-                    aspect_ratio=16/7,
-                    key_prefix="client_menu",
-                    show_dots=True,
-                    height_px=420
+                    gallery, interval_ms=5000, aspect_ratio=16/7,
+                    key_prefix="client_menu", show_dots=True, height_px=420
                 )
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Columna derecha: Chat tipo WhatsApp (sin título) + input fijo abajo
-    # ──────────────────────────────────────────────────────────────────────────
+    # ── Chat (derecha)
     with col_chat:
-        # Caja con scroll donde se pintan las burbujas
         st.markdown('<div class="chat-box" id="chatBox">',
                     unsafe_allow_html=True)
-        for m in st.session_state.conv:
-            klass = "msg-user" if m["role"] == "user" else "msg-bot"
-            st.markdown(f'<div class="{klass}">{
-                        m["content"]}</div>', unsafe_allow_html=True)
+        for m in ss.conv:
+            if m["role"] == "user":
+                st.markdown(
+                    f"""
+                    <div class="msg-row right">
+                      <div class="bubble user"><div class="header-chip">🙂 {t("Cliente", "Customer")}</div>{m["content"]}</div>
+                      <div class="avatar avatar-user">🙂</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    f"""
+                    <div class="msg-row left">
+                      <div class="avatar avatar-bot">🤖</div>
+                      <div class="bubble bot"><div class="header-chip">{assistant_name}</div>{m["content"]}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # WebRTC: captura de audio en background
+        # WebRTC (audio)
         rtc_cfg = {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
         media_constraints = {"audio": True, "video": False}
         webrtc_ctx = webrtc_streamer(
@@ -421,168 +449,144 @@ def main():
             async_processing=True,
         )
 
-        if "audio_buffer" not in st.session_state:
-            st.session_state.audio_buffer = []
+        if "audio_buffer" not in ss:
+            ss.audio_buffer = []
 
         class AudioProcessor:
             def recv(self, frame: av.AudioFrame):
                 pcm = frame.to_ndarray()
-                st.session_state.audio_buffer.append(pcm)
+                ss.audio_buffer.append(pcm)
                 return frame
 
         if webrtc_ctx and webrtc_ctx.state.playing:
             webrtc_ctx.audio_processor = AudioProcessor()
 
-        # Fila de input + botones (texto, Enviar, Confirmar, 🎙️)
+        # Input fijo inferior: texto | Enviar | Confirmar | 🎙️
         st.markdown('<div class="input-row">', unsafe_allow_html=True)
         c1, c2, c3, c4 = st.columns([7, 1.5, 2, 1.5])
 
         user_text = c1.text_input(
             "",
-            value=st.session_state.get("pending_user_input", ""),
+            value=ss.get("pending_user_input", ""),
             key="client_input",
             placeholder=t("Escribe tu mensaje…", "Type your message…"),
             label_visibility="collapsed"
         )
-
         send_clicked = c2.button(t("Enviar", "Send"), use_container_width=True)
+
+        # Confirmar: solo habilitado cuando NO falte info
+        missing = ensure_all_required_present(ss.get("client_info", {}), lang)
+        confirm_disabled = bool(missing)
         confirm_clicked = c3.button(
-            t("Confirmar", "Confirm"), use_container_width=True)
+            t("Confirmar", "Confirm"),
+            use_container_width=True,
+            disabled=confirm_disabled
+        )
         mic_clicked = c4.button("🎙️", use_container_width=True)
 
-        # Botón 🎙️: transcribe el último audio acumulado y lo inyecta al input
-        if mic_clicked and st.session_state.audio_buffer:
-            wav_bytes = np.concatenate(
-                st.session_state.audio_buffer, axis=1).tobytes()
-            st.session_state.audio_buffer = []
+        # Mic → transcribir último audio acumulado
+        if mic_clicked and ss.audio_buffer:
+            wav_bytes = np.concatenate(ss.audio_buffer, axis=1).tobytes()
+            ss.audio_buffer = []
             text = client_voice_to_text(wav_bytes, cfg)
             if text:
-                # concatena al input existente
-                cur = st.session_state.get("pending_user_input", "")
-                st.session_state.pending_user_input = (
-                    cur + " " + text).strip()
+                cur = ss.get("pending_user_input", "")
+                ss.pending_user_input = (cur + " " + text).strip()
                 st.rerun()
 
         # Enviar mensaje al LLM
         if send_clicked and user_text.strip():
-            st.session_state.conv.append(
-                {"role": "user", "content": user_text.strip()})
-            st.session_state.pending_user_input = ""
+            ss.conv.append({"role": "user", "content": user_text.strip()})
+            ss.pending_user_input = ""
 
             reply = client_assistant_reply(
-                st.session_state.conv, menu, cfg, conversation_id=st.session_state.conv_id
+                ss.conv, menu, cfg, conversation_id=ss.conv_id
             )
-            st.session_state.conv.append(
-                {"role": "assistant", "content": reply})
+            ss.conv.append({"role": "assistant", "content": reply})
 
-            # Extraer datos del cliente + items
-            info = extract_client_info(st.session_state.conv, lang)
-            st.session_state.client_info.update(
-                {k: v for k, v in info.items() if v})
-            st.session_state.order_items = parse_items_from_chat(
-                st.session_state.conv, menu, cfg
-            )
+            # Parseo de items + info (no forzamos preguntas aquí)
+            info = extract_client_info(ss.conv, lang)
+            ss.client_info.update({k: v for k, v in info.items() if v})
+            ss.order_items = parse_items_from_chat(ss.conv, menu, cfg)
 
-            # Si falta info, preguntar explícitamente el siguiente campo
-            missing = ensure_all_required_present(
-                st.session_state.client_info, lang)
-            if missing:
-                next_field = missing[0]
-                q_map_es = {
-                    "name": "¿Cuál es tu nombre?",
-                    "phone": "¿Cuál es tu número de teléfono?",
-                    "delivery_type": "¿Será para recoger (pickup) o entrega a domicilio?",
-                    "address": "¿Cuál es la dirección para la entrega?",
-                    "pickup_eta_min": "¿En cuántos minutos pasarías a recoger?",
-                    "payment_method": "¿Cuál es tu método de pago (efectivo, tarjeta u online)?",
-                }
-                q_map_en = {
-                    "name": "What is your name?",
-                    "phone": "What is your phone number?",
-                    "delivery_type": "Pickup or delivery?",
-                    "address": "What is the delivery address?",
-                    "pickup_eta_min": "In how many minutes would you pick up?",
-                    "payment_method": "What is your payment method (cash, card, online)?",
-                }
-                qmap = q_map_es if lang == "es" else q_map_en
-                st.session_state.conv.append(
-                    {"role": "assistant", "content": qmap[next_field]})
+            # Disparador: si hay items (pedido) y aún faltan datos → iniciamos fase de datos
+            # solo si NO estábamos ya recolectando
+            if ss.order_items and not ss.collecting_info:
+                # Mensaje guía + primera pregunta
+                pre = ("Ahora necesito unos datos para completar tu pedido:\n"
+                       "1) ¿Cuál es tu nombre?\n"
+                       "2) ¿Cuál es tu número de teléfono?\n"
+                       "3) ¿Será para recoger (pickup) o entrega a domicilio?\n"
+                       "4) Si es entrega: ¿Cuál es la dirección?\n"
+                       "5) Si es pickup: ¿En cuántos minutos pasarías a recoger?\n"
+                       "6) ¿Cuál es tu método de pago (efectivo, tarjeta u online)?") if lang == "es" else (
+                    "I now need a few details to complete your order:\n"
+                    "1) What's your name?\n"
+                    "2) What's your phone number?\n"
+                    "3) Pickup or delivery?\n"
+                    "4) If delivery: what's the address?\n"
+                    "5) If pickup: in how many minutes would you pick up?\n"
+                    "6) What is your payment method (cash, card, online)?")
+                ss.conv.append({"role": "assistant", "content": pre})
+                ss.collecting_info = True
+                ss.next_field_idx = 0
+
+            # Si estamos en fase de datos, pregunta secuencial del siguiente campo que falte
+            if ss.collecting_info:
+                missing_seq = ensure_all_required_present(ss.client_info, lang)
+                if missing_seq:
+                    order_fields = ["name", "phone", "delivery_type",
+                                    "address_or_pickup", "payment_method"]
+                    # construir el siguiente prompt según lo que falte
+
+                    def next_question(field: str) -> str:
+                        if lang == "es":
+                            return {
+                                "name": "¿Cuál es tu nombre?",
+                                "phone": "¿Cuál es tu número de teléfono?",
+                                "delivery_type": "¿Será para recoger (pickup) o entrega a domicilio?",
+                                "address": "¿Cuál es la dirección para la entrega?",
+                                "pickup_eta_min": "¿En cuántos minutos pasarías a recoger?",
+                                "payment_method": "¿Cuál es tu método de pago (efectivo, tarjeta u online)?",
+                            }[field]
+                        else:
+                            return {
+                                "name": "What is your name?",
+                                "phone": "What is your phone number?",
+                                "delivery_type": "Pickup or delivery?",
+                                "address": "What is the delivery address?",
+                                "pickup_eta_min": "In how many minutes would you pick up?",
+                                "payment_method": "What is your payment method (cash, card, online)?",
+                            }[field]
+
+                    # Elegir el campo correcto (address/pickup depende de delivery_type)
+                    next_field = missing_seq[0]
+                    ss.conv.append(
+                        {"role": "assistant", "content": next_question(next_field)})
+
+                else:
+                    # Ya tenemos todo → podemos confirmar
+                    pass
 
             st.rerun()
 
-        # Confirmar pedido (validación estricta)
-        if confirm_clicked:
-            missing = ensure_all_required_present(
-                st.session_state.get("client_info", {}), lang)
-            label_map_es = {"name": "nombre", "phone": "teléfono", "delivery_type": "tipo de entrega",
-                            "payment_method": "método de pago", "address": "dirección", "pickup_eta_min": "tiempo de retiro (min)"}
-            label_map_en = {"name": "name", "phone": "phone", "delivery_type": "delivery type",
-                            "payment_method": "payment method", "address": "address", "pickup_eta_min": "pickup ETA (min)"}
-            lm = label_map_es if lang == "es" else label_map_en
-            miss_str = ", ".join([lm[m] for m in missing])
+        # Confirmar pedido
+        if confirm_clicked and not confirm_disabled:
+            order = create_order_from_chat_ready(
+                client=ss.get("client_info", {}),
+                items=ss.get("order_items", []),
+                currency=currency,
+            )
+            ss.conv.append({"role": "assistant", "content": t(
+                "¡Pedido listo! Gracias. Lo estamos preparando 🚗💨 si es a domicilio, o listo según tu hora de retiro.",
+                "Order confirmed! We're on it 🚗💨 for delivery, or ready at your pickup time."
+            )})
+            st.success(t("¡Pedido confirmado!", "Order confirmed!"))
+            st.rerun()
 
-            if missing:
-                st.error(t(f"No se puede confirmar. Falta: {miss_str}",
-                           f"Cannot confirm. Missing: {miss_str}"))
-            else:
-                order = create_order_from_chat_ready(
-                    client=st.session_state.get("client_info", {}),
-                    items=st.session_state.get("order_items", []),
-                    currency=currency,
-                )
-                st.session_state.conv.append({"role": "assistant", "content": t(
-                    "Pedido confirmado. ¡Lo estamos preparando! 🚗💨 si es a domicilio, o listo según tu hora de retiro.",
-                    "Order confirmed. We’re on it! 🚗💨 for delivery, or ready at your pickup time."
-                )})
-                st.success(t("¡Pedido confirmado!", "Order confirmed!"))
-                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown('</div>', unsafe_allow_html=True)  # cierre input-row
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Aviso de campos faltantes + items detectados (bajo el chat)
-    # ──────────────────────────────────────────────────────────────────────────
-    st.write("---")
-    missing = ensure_all_required_present(
-        st.session_state.get("client_info", {}), lang)
-    label_map_es = {"name": "nombre", "phone": "teléfono", "delivery_type": "tipo de entrega",
-                    "payment_method": "método de pago", "address": "dirección", "pickup_eta_min": "tiempo de retiro (min)"}
-    label_map_en = {"name": "name", "phone": "phone", "delivery_type": "delivery type",
-                    "payment_method": "payment method", "address": "address", "pickup_eta_min": "pickup ETA (min)"}
-    lm = label_map_es if lang == "es" else label_map_en
-    miss_str = ", ".join([lm[m] for m in missing])
-
-    left, right = st.columns([2, 1])
-    with left:
-        if missing:
-            st.warning(t(f"Faltan datos para confirmar: {miss_str}.",
-                         f"Missing fields: {miss_str}."))
-        else:
-            st.success(t("Tenemos todos los datos. Puedes confirmar.",
-                         "All data present. You can confirm."))
-            if st.session_state.get("order_items"):
-                st.caption(t("Ítems detectados: ", "Detected items: ") + "; ".join(
-                    [f"{i['name']} x{i['qty']}" for i in st.session_state["order_items"]]
-                ))
-
-    with right:
-        # Botón redundante (por comodidad) para confirmar también desde aquí
-        if st.button(t("✅ Confirmar pedido", "✅ Confirm order"), use_container_width=True):
-            if missing:
-                st.error(t(f"No se puede confirmar. Falta: {miss_str}",
-                           f"Cannot confirm. Missing: {miss_str}"))
-            else:
-                order = create_order_from_chat_ready(
-                    client=st.session_state.get("client_info", {}),
-                    items=st.session_state.get("order_items", []),
-                    currency=currency,
-                )
-                st.session_state.conv.append({"role": "assistant", "content": t(
-                    "Pedido confirmado. ¡Lo estamos preparando! 🚗💨 si es a domicilio, o listo según tu hora de retiro.",
-                    "Order confirmed. We’re on it! 🚗💨 for delivery, or ready at your pickup time."
-                )})
-                st.success(t("¡Pedido confirmado!", "Order confirmed!"))
-                st.rerun()
+    # (Se eliminó el bloque inferior que duplicaba el botón Confirmar)
 
 
 if __name__ == "__main__":
