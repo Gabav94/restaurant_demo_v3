@@ -739,8 +739,8 @@ def main():
 
     # ── Chat (derecha)
     with col_chat:
-        st.markdown('<div class="chat-box" id="chatBox">',
-                    unsafe_allow_html=True)
+        # st.markdown('<div class="chat-box" id="chatBox">',
+        #             unsafe_allow_html=True)
         for m in ss.conv:
             if m["role"] == "user":
                 st.markdown(
