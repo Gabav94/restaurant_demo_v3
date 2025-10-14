@@ -6,6 +6,11 @@ Created on Thu Sep 25 10:36:48 2025
 """
 
 from __future__ import annotations
+try:
+    from backend.db_patch import main as _dbpatch_main
+    _dbpatch_main()
+except Exception as _e:
+    print("[startup] db_patch skipped:", _e)
 import streamlit as st
 from backend.config import ensure_default_config, get_config, update_config
 from backend.db import ensure_db_and_seed, normalize_media_records

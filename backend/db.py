@@ -12,6 +12,7 @@ import uuid
 import datetime as dt
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
+from pathlib import Path
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text, Float, DateTime, Boolean, and_
 )
@@ -19,18 +20,46 @@ from sqlalchemy import text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from PIL import Image, ImageDraw, ImageFont
 
-from config import get_config
+from backend.config import get_config
 
 # DB_DIR = "data"
 # MEDIA_DIR = os.path.join(DB_DIR, "media")
 # os.makedirs(MEDIA_DIR, exist_ok=True)
 # Ancla rutas a la raíz del proyecto (carpeta que contiene /backend)
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-DB_DIR = os.path.join(ROOT_DIR, "data")
-MEDIA_DIR = os.path.join(DB_DIR, "media")
-os.makedirs(MEDIA_DIR, exist_ok=True)
+# Ruta por defecto (local): ./data
+# Permite override manual con variable de entorno (opcional)
+_env_data_dir = os.getenv("RESTAURANT_DATA_DIR")
 
-DB_PATH = os.path.join(DB_DIR, "app.db")
+# Ruta por defecto (local)
+DEFAULT_DATA = Path("data").resolve()
+
+# Ruta persistente y writable en Streamlit Cloud
+CLOUD_DATA_BASE = Path("/mount/data")
+CLOUD_DATA = CLOUD_DATA_BASE / "restaurant_demo_v3"
+
+if _env_data_dir:
+    DATA_ROOT = Path(_env_data_dir).resolve()
+elif CLOUD_DATA_BASE.exists():  # estamos en Cloud
+    DATA_ROOT = CLOUD_DATA
+else:
+    DATA_ROOT = DEFAULT_DATA
+
+DATA_ROOT.mkdir(parents=True, exist_ok=True)
+
+DB_PATH = DATA_ROOT / "app.db"
+MEDIA_DIR = DATA_ROOT / "media"
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+
+# Si hay una DB vieja en ./data/app.db y aún no existe la nueva, la migramos
+OLD_DB = Path("data/app.db").resolve()
+if OLD_DB.exists() and not DB_PATH.exists():
+    try:
+        DB_PATH.write_bytes(OLD_DB.read_bytes())
+        print(f"[db] Migré DB a {DB_PATH}")
+    except Exception as e:
+        print("[db] No pude migrar DB:", e)
+
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
 engine = create_engine(f"sqlite:///{DB_PATH}", echo=False, future=True)
 SessionLocal = sessionmaker(
     bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)

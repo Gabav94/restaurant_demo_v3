@@ -50,9 +50,22 @@ def _img_to_base64(img_path: str) -> str | None:
         return None
 
 
+# --- normalizador cross-platform (útil también para imágenes)
+def _normalize_path(p: str) -> str:
+    if not p:
+        return p
+    p = p.replace("\\", "/")             # Windows -> Linux
+    if not os.path.isabs(p) and not p.startswith("data/media/"):
+        p = os.path.join("data", "media", os.path.basename(p))
+    p = os.path.normpath(p)
+    if not os.path.isabs(p):
+        p = os.path.abspath(p)
+    return p
+
+
 def _img_to_base64_quiet(img_path: str) -> str | None:
     try:
-        p = img_path if os.path.isabs(img_path) else os.path.abspath(img_path)
+        p = _normalize_path(img_path)
         if not os.path.isfile(p):
             return None
         im = Image.open(p).convert("RGB")
@@ -64,118 +77,91 @@ def _img_to_base64_quiet(img_path: str) -> str | None:
 
 
 def render_js_carousel(
-    image_paths,
+    images: list[str] | list[Image.Image],
     interval_ms: int = 5000,
-    aspect_ratio: float = 16/6,
+    aspect_ratio: float = 16/9,
     key_prefix: str = "carousel",
     show_dots: bool = True,
-    *args, **kwargs
+    height_px: int | None = None,   # ← NUEVO parámetro (opcional)
+    **kwargs,                       # ← para seguir siendo compatible
 ):
     """
-    Retrocompatible: si versiones antiguas lo llaman sin height_px, no rompe.
-    height_px opcional en kwargs.
+    Muestra un carrusel puro JS/HTML, sin provocar reruns de Streamlit.
+    - height_px: si se pasa, fuerza alto fijo en px. Si no, usa aspect_ratio.
     """
-    height_px = kwargs.pop("height_px", None)
-    if not image_paths:
-        st.info("No hay imágenes para el carrusel.")
+    if not images:
+        st.info("No hay imágenes para mostrar.")
         return
 
-    data_uris, missing = [], 0
-    for p in image_paths:
-        b64 = _img_to_base64_quiet(p)
-        if b64:
-            data_uris.append(b64)
+    # convierte a data URLs
+    data_urls = []
+    for img in images:
+        if isinstance(img, str):
+            b64 = _img_to_base64_quiet(img)
         else:
-            missing += 1
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            b64 = "data:image/png;base64," + \
+                base64.b64encode(buf.getvalue()).decode("ascii")
+        if b64:
+            data_urls.append(b64)
 
-    if not data_uris:
-        st.info("No se pudieron cargar imágenes del carrusel.")
+    if not data_urls:
+        st.warning("No se pudieron cargar las imágenes del carrusel.")
         return
-    elif missing > 0:
-        st.caption(f"Se omitieron {missing} imagen(es) no disponibles.")
 
-    cid = f"c_{key_prefix}_{uuid.uuid4().hex[:8]}"
+    # HTML/JS del carrusel
+    height_style = f"height:{
+        int(height_px)}px;" if height_px else f"aspect-ratio:{aspect_ratio};"
     dots_html = ""
     if show_dots:
-        dots_html = "<div class='dots'>" + \
-            "".join(
-                [f"<span class='dot' data-idx='{i}'></span>" for i in range(len(data_uris))]) + "</div>"
+        dots_html = "<div class='dots'>" + "".join(
+            f"<span class='dot' data-idx='{i}'></span>" for i in range(len(data_urls))
+        ) + "</div>"
 
     html = f"""
-        <div id="{cid}" class="carousel">
-          <div class="viewport">
-            {''.join([f'<img class="slide" src="{u}" loading="lazy" />' for u in data_uris])}
-          </div>
-          {dots_html}
-        </div>
-
-        <style>
-          #{cid}.carousel {{
-            width: 100%;
-            max-width: 1200px;
-            margin: .25rem auto 0 auto;
-          }}
-          #{cid} .viewport {{
-            position: relative;
-            width: 100%;
-            overflow: hidden;
-            border-radius: 12px;
-            box-shadow: 0 4px 18px rgba(0,0,0,0.08);
-            height: {height_px if height_px else 'auto'}px;
-          }}
-          #{cid} .viewport::before {{
-            content: "";
-            display: {"none" if height_px else "block"};
-            padding-top: {0 if height_px else f"{100/aspect_ratio:.4f}%"};
-          }}
-          #{cid} .viewport .slide {{
-            position: absolute; top:0; left:0;
-            width: 100%; height: 100%;
-            object-fit: cover; display: none;
-          }}
-          #{cid} .viewport .slide.active {{ display: block; }}
-          #{cid} .dots {{
-            display: flex; gap: 8px; justify-content: center; align-items: center;
-            margin-top: .5rem;
-          }}
-          #{cid} .dot {{
-            width: 10px; height: 10px; border-radius: 50%;
-            background: #d0d0d0; cursor: pointer;
-          }}
-          #{cid} .dot.active {{ background: #4a90e2; }}
-          @media (max-width: 768px) {{
-            #{cid}.carousel {{ max-width: 100%; }}
-            #{cid} .viewport {{ height: {int((height_px or 420)*0.9)}px; }}
-          }}
-        </style>
-
-        <script>
-          (function() {{
-            const root = document.getElementById("{cid}");
-            if (!root) return;
-            const slides = Array.from(root.querySelectorAll(".slide"));
-            const dots = Array.from(root.querySelectorAll(".dot"));
-            let idx = 0;
-            function show(i) {{
-              slides.forEach((el, k) => el.classList.toggle("active", k===i));
-              dots.forEach((el, k) => el.classList.toggle("active", k===i));
-            }}
-            function next() {{ idx = (idx + 1) % slides.length; show(idx); }}
-            if (slides.length) show(0);
-            let timer = setInterval(next, {interval_ms});
-            dots.forEach(d => {{
-              d.addEventListener('click', () => {{
-                const i = parseInt(d.getAttribute('data-idx'));
-                idx = i; show(idx);
-                clearInterval(timer);
-                timer = setInterval(next, {interval_ms});
-              }});
-            }});
-          }})();
-        </script>
+    <style>
+      .carousel-{key_prefix} {{
+        width: 100%; {height_style}
+        position: relative; overflow: hidden; border-radius: 12px; background: #111;
+        display:flex; align-items:center; justify-content:center;
+      }}
+      .carousel-{key_prefix} img {{
+        width: 100%; height: 100%; object-fit: cover;
+      }}
+      .dots {{
+        position: absolute; bottom: 8px; width: 100%; text-align: center;
+      }}
+      .dot {{
+        display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+        background: #bbb; margin: 0 4px; cursor: pointer;
+      }}
+      .dot.active {{ background: #fff; }}
+    </style>
+    <div class="carousel-{key_prefix}">
+      <img id="{key_prefix}-img" src="{data_urls[0]}" />
+      {dots_html}
+    </div>
+    <script>
+      (function(){{
+        const imgs = {data_urls};
+        const img = parent.document.getElementById("{key_prefix}-img");
+        const dots = parent.document.querySelectorAll(".carousel-{key_prefix} .dot");
+        let idx = 0;
+        function show(i){{
+          idx = (i + imgs.length) % imgs.length;
+          img.src = imgs[idx];
+          dots.forEach((d,j)=>d.classList.toggle("active", j===idx));
+        }}
+        dots.forEach(d => {{
+          d.addEventListener('click', ()=> show(parseInt(d.getAttribute('data-idx'))));
+        }});
+        show(0);
+        setInterval(()=> show(idx+1), {int(interval_ms)});
+      }})();
+    </script>
     """
-    comp_height = height_px or int(900/aspect_ratio)
-    st.components.v1.html(html, height=comp_height + 60, scrolling=False)
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def _image(img, **kwargs):
