@@ -19,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import declarative_base, sessionmaker
 from PIL import Image, ImageDraw, ImageFont
 
-from backend.config import get_config
+from config import get_config
 
 # DB_DIR = "data"
 # MEDIA_DIR = os.path.join(DB_DIR, "media")
