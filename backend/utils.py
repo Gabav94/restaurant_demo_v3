@@ -64,22 +64,23 @@ def _img_to_base64_quiet(img_path: str) -> str | None:
 
 
 def render_js_carousel(
-    image_paths: list[str],
+    image_paths,
     interval_ms: int = 5000,
-    aspect_ratio: float = 16/6,   # ancho/alto
+    aspect_ratio: float = 16/6,
     key_prefix: str = "carousel",
     show_dots: bool = True,
-    # <-- NUEVO: altura fija por defecto (más alto en móvil)
-    height_px: int | None = 420,
+    *args, **kwargs
 ):
-    """Renderiza un carrusel de imágenes con JS sin recargar la app."""
+    """
+    Retrocompatible: si versiones antiguas lo llaman sin height_px, no rompe.
+    height_px opcional en kwargs.
+    """
+    height_px = kwargs.pop("height_px", None)
     if not image_paths:
         st.info("No hay imágenes para el carrusel.")
         return
 
-    # Convierte a data URIs
-    data_uris = []
-    missing = 0
+    data_uris, missing = [], 0
     for p in image_paths:
         b64 = _img_to_base64_quiet(p)
         if b64:
@@ -101,91 +102,78 @@ def render_js_carousel(
                 [f"<span class='dot' data-idx='{i}'></span>" for i in range(len(data_uris))]) + "</div>"
 
     html = f"""
-<div id="{cid}" class="carousel">
-  <div class="viewport">
-    {''.join([f'<img class="slide" src="{u}" loading="lazy" />' for u in data_uris])}
-  </div>
-  {dots_html}
-</div>
+        <div id="{cid}" class="carousel">
+          <div class="viewport">
+            {''.join([f'<img class="slide" src="{u}" loading="lazy" />' for u in data_uris])}
+          </div>
+          {dots_html}
+        </div>
 
-<style>
-  #{cid}.carousel {{
-    width: 100%;
-    max-width: 1200px;
-    margin: .25rem auto 0 auto;
-  }}
-  #{cid} .viewport {{
-    position: relative;
-    width: 100%;
-    overflow: hidden;
-    border-radius: 12px;
-    box-shadow: 0 4px 18px rgba(0,0,0,0.08);
-    height: {height_px if height_px else 'auto'}px;  /* altura fija si se pasa */
-  }}
-  /* Si NO se define height fija, mantenemos ratio con padding (fallback) */
-  #{cid} .viewport::before {{
-    content: "";
-    display: {"none" if height_px else "block"};
-    padding-top: {0 if height_px else f"{100/aspect_ratio:.4f}%"};
-  }}
-  #{cid} .viewport .slide {{
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    object-fit: cover;
-    display: none;
-  }}
-  #{cid} .viewport .slide.active {{
-    display: block;
-  }}
-  #{cid} .dots {{
-    display: flex; gap: 8px; justify-content: center; align-items: center;
-    margin-top: .5rem;
-  }}
-  #{cid} .dot {{
-    width: 10px; height: 10px; border-radius: 50%;
-    background: #d0d0d0; cursor: pointer;
-  }}
-  #{cid} .dot.active {{
-    background: #4a90e2;
-  }}
-  @media (max-width: 768px) {{
-    #{cid}.carousel {{ max-width: 100%; }}
-    #{cid} .viewport {{ height: {int((height_px or 420)*0.9)}px; }}
-  }}
-</style>
+        <style>
+          #{cid}.carousel {{
+            width: 100%;
+            max-width: 1200px;
+            margin: .25rem auto 0 auto;
+          }}
+          #{cid} .viewport {{
+            position: relative;
+            width: 100%;
+            overflow: hidden;
+            border-radius: 12px;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+            height: {height_px if height_px else 'auto'}px;
+          }}
+          #{cid} .viewport::before {{
+            content: "";
+            display: {"none" if height_px else "block"};
+            padding-top: {0 if height_px else f"{100/aspect_ratio:.4f}%"};
+          }}
+          #{cid} .viewport .slide {{
+            position: absolute; top:0; left:0;
+            width: 100%; height: 100%;
+            object-fit: cover; display: none;
+          }}
+          #{cid} .viewport .slide.active {{ display: block; }}
+          #{cid} .dots {{
+            display: flex; gap: 8px; justify-content: center; align-items: center;
+            margin-top: .5rem;
+          }}
+          #{cid} .dot {{
+            width: 10px; height: 10px; border-radius: 50%;
+            background: #d0d0d0; cursor: pointer;
+          }}
+          #{cid} .dot.active {{ background: #4a90e2; }}
+          @media (max-width: 768px) {{
+            #{cid}.carousel {{ max-width: 100%; }}
+            #{cid} .viewport {{ height: {int((height_px or 420)*0.9)}px; }}
+          }}
+        </style>
 
-<script>
-  (function() {{
-    const root = document.getElementById("{cid}");
-    if (!root) return;
-    const slides = Array.from(root.querySelectorAll(".slide"));
-    const dots = Array.from(root.querySelectorAll(".dot"));
-    let idx = 0;
-    function show(i) {{
-      slides.forEach((el, k) => el.classList.toggle("active", k===i));
-      dots.forEach((el, k) => el.classList.toggle("active", k===i));
-    }}
-    function next() {{
-      idx = (idx + 1) % slides.length;
-      show(idx);
-    }}
-    if (slides.length) {{
-      show(0);
-    }}
-    let timer = setInterval(next, {interval_ms});
-    dots.forEach(d => {{
-      d.addEventListener('click', () => {{
-        const i = parseInt(d.getAttribute('data-idx'));
-        idx = i; show(idx);
-        clearInterval(timer);
-        timer = setInterval(next, {interval_ms});
-      }});
-    }});
-  }})();
-</script>
+        <script>
+          (function() {{
+            const root = document.getElementById("{cid}");
+            if (!root) return;
+            const slides = Array.from(root.querySelectorAll(".slide"));
+            const dots = Array.from(root.querySelectorAll(".dot"));
+            let idx = 0;
+            function show(i) {{
+              slides.forEach((el, k) => el.classList.toggle("active", k===i));
+              dots.forEach((el, k) => el.classList.toggle("active", k===i));
+            }}
+            function next() {{ idx = (idx + 1) % slides.length; show(idx); }}
+            if (slides.length) show(0);
+            let timer = setInterval(next, {interval_ms});
+            dots.forEach(d => {{
+              d.addEventListener('click', () => {{
+                const i = parseInt(d.getAttribute('data-idx'));
+                idx = i; show(idx);
+                clearInterval(timer);
+                timer = setInterval(next, {interval_ms});
+              }});
+            }});
+          }})();
+        </script>
     """
-    # altura del componente: si usamos height_px, lo respetamos; si no, calculamos por ratio
     comp_height = height_px or int(900/aspect_ratio)
     st.components.v1.html(html, height=comp_height + 60, scrolling=False)
 

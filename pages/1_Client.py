@@ -466,7 +466,7 @@ def main():
         c1, c2, c3, c4 = st.columns([7, 1.5, 2, 1.5])
 
         user_text = c1.text_input(
-            "",
+            "message",
             value=ss.get("pending_user_input", ""),
             key="client_input",
             placeholder=t("Escribe tu mensaje…", "Type your message…"),
@@ -504,15 +504,34 @@ def main():
             )
             ss.conv.append({"role": "assistant", "content": reply})
 
-            # Parseo de items + info (no forzamos preguntas aquí)
+            # Parseo de items + info
             info = extract_client_info(ss.conv, lang)
             ss.client_info.update({k: v for k, v in info.items() if v})
             ss.order_items = parse_items_from_chat(ss.conv, menu, cfg)
 
-            # Disparador: si hay items (pedido) y aún faltan datos → iniciamos fase de datos
-            # solo si NO estábamos ya recolectando
-            if ss.order_items and not ss.collecting_info:
-                # Mensaje guía + primera pregunta
+            # --- NUEVO: trigger robusto para iniciar fase de datos ---
+            def _looks_like_total_or_close(reply_text: str, user_text: str) -> bool:
+                r = (reply_text or "").lower()
+                u = (user_text or "").lower()
+                money_signals = ["total", "subtotal", "precio", "price",
+                                 "$", "usd", "eur", "s/.", "mxn", "cop", "ars"]
+                close_signals = [
+                    "eso sería todo", "listo", "está bien", "confirmar", "confirmo",
+                    "that's all", "done", "ok that's it", "confirm"
+                ]
+                if any(s in r for s in money_signals):
+                    return True
+                if any(s in u for s in close_signals):
+                    return True
+                return False
+
+            last_assistant = next((m["content"] for m in reversed(
+                ss.conv) if m["role"] == "assistant"), "")
+            # user_text de este turno lo tienes como `user_text`
+            should_collect = (ss.order_items and _looks_like_total_or_close(
+                last_assistant, user_text))
+
+            if should_collect and not ss.collecting_info:
                 pre = ("Ahora necesito unos datos para completar tu pedido:\n"
                        "1) ¿Cuál es tu nombre?\n"
                        "2) ¿Cuál es tu número de teléfono?\n"
@@ -533,12 +552,9 @@ def main():
 
             # Si estamos en fase de datos, pregunta secuencial del siguiente campo que falte
             if ss.collecting_info:
-                missing_seq = ensure_all_required_present(ss.client_info, lang)
+                missing_seq = ensure_all_required_present(
+                    ss.client_info, lang)
                 if missing_seq:
-                    order_fields = ["name", "phone", "delivery_type",
-                                    "address_or_pickup", "payment_method"]
-                    # construir el siguiente prompt según lo que falte
-
                     def next_question(field: str) -> str:
                         if lang == "es":
                             return {
@@ -558,15 +574,14 @@ def main():
                                 "pickup_eta_min": "In how many minutes would you pick up?",
                                 "payment_method": "What is your payment method (cash, card, online)?",
                             }[field]
-
-                    # Elegir el campo correcto (address/pickup depende de delivery_type)
                     next_field = missing_seq[0]
                     ss.conv.append(
                         {"role": "assistant", "content": next_question(next_field)})
+                    # si no faltan, ya no añadimos nada aquí (el botón quedará habilitado)
 
-                else:
-                    # Ya tenemos todo → podemos confirmar
-                    pass
+            # else:
+            #     # Ya tenemos todo → podemos confirmar
+            #     pass
 
             st.rerun()
 
