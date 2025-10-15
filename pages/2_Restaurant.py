@@ -204,7 +204,7 @@ def main():
             # carousel(gallery, key_prefix="rest_menu",
             #          lang=lang, interval_sec=5)
             render_js_carousel(gallery, interval_ms=5000, aspect_ratio=16 /
-                               6, key_prefix="rest_menu", show_dots=True, height_px=420)
+                               6, key_prefix="rest_menu", show_dots=True, height_px=520)
 
     st.write("---")
     c1, c2 = st.columns(2)

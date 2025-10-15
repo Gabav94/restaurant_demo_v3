@@ -14,7 +14,7 @@ from backend.db import (
     reset_everything, ensure_db_and_seed, fetch_menu_banners
 )
 from backend.faq import clear_faq
-from backend.utils import render_js_carousel
+from backend.utils import render_js_carousel, fetch_banners
 import time
 
 st.set_page_config(page_title="Admin (Super)", page_icon="⚙️", layout="wide")
@@ -107,13 +107,13 @@ def main():
 
     with col2:
         st.markdown(t("**Banners del menú**", "**Menu banners**"))
-        banners = fetch_menu_banners()
+        banners = fetch_banners()
         if banners:
             # _image_compat(banners[0])
             # carousel(banners, key_prefix="admin_banners",
             #          lang=lang, interval_sec=5)
             render_js_carousel(banners, interval_ms=5000, aspect_ratio=16 /
-                               6, key_prefix="admin_banners", show_dots=True, height_px=420)
+                               6, key_prefix="admin_banners", show_dots=True, height_px=520)
 
         else:
             st.caption(t("Los banners por defecto se generan automáticamente en el primer arranque.",

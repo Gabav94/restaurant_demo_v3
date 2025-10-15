@@ -734,7 +734,7 @@ def main():
             else:
                 render_js_carousel(
                     gallery, interval_ms=5000, aspect_ratio=16/7,
-                    key_prefix="client_menu", show_dots=True, height_px=420
+                    key_prefix="client_menu", show_dots=True, height_px=520
                 )
 
     # ── Chat (derecha)

@@ -6,14 +6,18 @@ Created on Thu Sep 25 10:36:48 2025
 """
 
 from __future__ import annotations
+from backend.db import ensure_db_and_seed, normalize_media_records
+from backend.config import ensure_default_config, get_config, update_config
+import streamlit as st
+
+st.set_page_config(page_title="Restaurant AI Demo",
+                   page_icon="🍽️", layout="wide")
+
 try:
     from backend.db_patch import main as _dbpatch_main
     _dbpatch_main()
 except Exception as _e:
     print("[startup] db_patch skipped:", _e)
-import streamlit as st
-from backend.config import ensure_default_config, get_config, update_config
-from backend.db import ensure_db_and_seed, normalize_media_records
 
 ensure_db_and_seed()
 ensure_default_config()
@@ -21,9 +25,6 @@ try:
     normalize_media_records()
 except Exception:
     pass
-
-st.set_page_config(page_title="Restaurant AI Demo",
-                   page_icon="🍽️", layout="wide")
 
 
 def _image_compat(img):
