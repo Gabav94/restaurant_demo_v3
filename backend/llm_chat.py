@@ -413,19 +413,125 @@ def _system_prompt(cfg: dict, menu: List[Dict], lang: str) -> str:
 #     return reply
 
 
+# def client_assistant_reply(history: List[Dict], menu: List[Dict], cfg: dict | None, conversation_id: str) -> str:
+#     """
+#     - Consulta FAQ antes que el LLM.
+#     - Refuerza en el prompt que NO pida datos personales hasta tener total o cierre del pedido.
+#     - Dispara 'pending' por dos vías:
+#         (a) Si el LLM devuelve la frase de consulta a cocina (ES/EN).
+#         (b) Heurística sobre el último mensaje del usuario cuando pide cosas fuera del menú o
+#             personalizaciones de ingredientes no listadas con claridad.
+#     """
+#     cfg = cfg or get_config()
+#     lang = cfg.get("language", "es")
+
+#     # --- 1) FAQ pre-check
+#     last_user = next((m["content"] for m in reversed(
+#         history) if m.get("role") == "user"), "")
+#     if last_user:
+#         faq_ans = match_faq(last_user, language=lang)
+#         if faq_ans:
+#             return faq_ans
+
+#     # --- 2) Reglas adicionales al prompt del sistema (no pedir datos hasta el final)
+#     llm = _get_llm(cfg)
+#     sys = _system_prompt(cfg, menu, lang)
+#     extra_rules = (
+#         "\n\n⚠️ Reglas adicionales importantes:\n"
+#         "- No solicites nombre, teléfono, dirección ni método de pago hasta que el cliente indique que terminó o hayas dado un total/subtotal claro.\n"
+#         "- Si el cliente pide algo fuera del menú o una personalización dudosa, responde con: "
+#         "\"⏳ Espera un momento por favor, estoy consultando con cocina…\" y NO inventes.\n"
+#     ) if lang == "es" else (
+#         "\n\n⚠️ Additional rules:\n"
+#         "- Do not ask for name, phone, address or payment method until the customer says they are done or you have provided a clear total/subtotal.\n"
+#         "- If the customer asks for something off-menu or a doubtful customization, reply: "
+#         "\"⏳ Please wait a moment, I'm checking with the kitchen…\" and do not make things up.\n"
+#     )
+#     sys = sys + extra_rules
+
+#     msgs = [{"role": "system", "content": sys}] + history[-12:]
+#     res = llm.invoke(msgs)
+#     reply = (res.content or "").strip()
+
+#     # --- 3) Trigger 'pending' por respuesta del LLM (palabras clave ES/EN)
+#     low = reply.lower()
+#     llm_signals = [
+#         "consultando con cocina",         # ES
+#         "checking with the kitchen",      # EN
+#         "consultar con cocina",           # ES
+#         "checking with kitchen"           # EN
+#     ]
+#     llm_suggests_pending = any(sig in low for sig in llm_signals)
+
+#     # --- 4) Trigger heurístico por mensaje del usuario si parece "difícil"
+#     def _normalize(s: str) -> str:
+#         return (s or "").lower().strip()
+
+#     def _menu_tokens(menu_items: List[Dict]) -> set:
+#         tokens = set()
+#         for it in (menu_items or []):
+#             name = _normalize(it.get("name", ""))
+#             desc = _normalize(it.get("description", ""))
+#             if name:
+#                 tokens.update(re.findall(r"[a-záéíóúñü]+", name))
+#             if desc:
+#                 tokens.update(re.findall(r"[a-záéíóúñü]+", desc))
+#         return tokens
+
+#     def _looks_difficult(user_text: str, menu_items: List[Dict]) -> bool:
+#         text = _normalize(user_text)
+#         if not text:
+#             return False
+
+#         # Señales de personalización/ingredientes
+#         intent_words = [
+#             "sin ", "con ", "extra ", "aparte", "remover", "quitar", "agregar", "añadir",
+#             "ingrediente", "gluten", "vegano", "celíac", "picant", "lactosa", "cambiar",
+#             # EN
+#             "without ", "with ", "extra ", "on the side", "remove", "add", "ingredient",
+#             "gluten", "vegan", "celiac", "spicy", "lactose", "swap", "replace"
+#         ]
+#         if any(w in text for w in intent_words):
+#             # Si no menciona con claridad un item del menú, lo marcamos como difícil
+#             menu_words = _menu_tokens(menu_items)
+#             user_words = set(re.findall(r"[a-záéíóúñü]+", text))
+#             overlap = len(menu_words.intersection(user_words))
+#             # Umbral bajo para evitar falsos negativos
+#             if overlap < 1:
+#                 return True
+
+#         # Señales de pedir algo que no suena a lo listado
+#         off_menu_markers = [
+#             "no está en el menú", "no veo en el menú", "tienen X?", "hacen X?",
+#             "do you have", "not on the menu", "can you make", "custom"
+#         ]
+#         if any(m in text for m in off_menu_markers):
+#             return True
+
+#         return False
+
+#     heuristic_difficult = _looks_difficult(last_user, menu)
+
+#     # --- 5) Crear pending si corresponde (por cualquiera de los triggers)
+#     if llm_suggests_pending or heuristic_difficult:
+#         try:
+#             create_pending_question(
+#                 conversation_id=conversation_id,
+#                 question=last_user or "(consulta del cliente)",
+#                 language=lang,
+#                 ttl_seconds=60
+#             )
+#         except Exception:
+#             # fallar silencioso para no romper UX, el autoaprobado seguirá funcionando
+#             pass
+
+#     return reply
+
 def client_assistant_reply(history: List[Dict], menu: List[Dict], cfg: dict | None, conversation_id: str) -> str:
-    """
-    - Consulta FAQ antes que el LLM.
-    - Refuerza en el prompt que NO pida datos personales hasta tener total o cierre del pedido.
-    - Dispara 'pending' por dos vías:
-        (a) Si el LLM devuelve la frase de consulta a cocina (ES/EN).
-        (b) Heurística sobre el último mensaje del usuario cuando pide cosas fuera del menú o
-            personalizaciones de ingredientes no listadas con claridad.
-    """
     cfg = cfg or get_config()
     lang = cfg.get("language", "es")
 
-    # --- 1) FAQ pre-check
+    # 1) FAQ primero
     last_user = next((m["content"] for m in reversed(
         history) if m.get("role") == "user"), "")
     if last_user:
@@ -433,7 +539,7 @@ def client_assistant_reply(history: List[Dict], menu: List[Dict], cfg: dict | No
         if faq_ans:
             return faq_ans
 
-    # --- 2) Reglas adicionales al prompt del sistema (no pedir datos hasta el final)
+    # 2) Prompt del sistema reforzado (no pedir datos hasta el final)
     llm = _get_llm(cfg)
     sys = _system_prompt(cfg, menu, lang)
     extra_rules = (
@@ -453,17 +559,29 @@ def client_assistant_reply(history: List[Dict], menu: List[Dict], cfg: dict | No
     res = llm.invoke(msgs)
     reply = (res.content or "").strip()
 
-    # --- 3) Trigger 'pending' por respuesta del LLM (palabras clave ES/EN)
+    # 3) Si el LLM sugiere extras y trae "total", cámbialo a "subtotal"
     low = reply.lower()
+    suggest_es = ["algo más", "otra bebida",
+                  "agregar", "añadir", "deseas algo más"]
+    suggest_en = ["anything else", "another drink", "add something",
+                  "add a drink", "would you like anything else"]
+    suggests_more = any(s in low for s in (
+        suggest_es if lang == "es" else suggest_en))
+
+    if suggests_more:
+        # reemplazo case-insensitive preservando lo básico
+        def _to_subtotal(text: str) -> str:
+            # total -> subtotal  (Total:, TOTAL, etc.)
+            return re.sub(r'\btotal\b', 'subtotal', text, flags=re.IGNORECASE)
+        reply = _to_subtotal(reply)
+
+    # 4) Disparo de pending por texto del LLM
     llm_signals = [
-        "consultando con cocina",         # ES
-        "checking with the kitchen",      # EN
-        "consultar con cocina",           # ES
-        "checking with kitchen"           # EN
+        "consultando con cocina", "checking with the kitchen", "consultar con cocina", "checking with kitchen"
     ]
     llm_suggests_pending = any(sig in low for sig in llm_signals)
 
-    # --- 4) Trigger heurístico por mensaje del usuario si parece "difícil"
+    # 5) Disparo heurístico por el último mensaje del usuario (casos “difíciles”)
     def _normalize(s: str) -> str:
         return (s or "").lower().strip()
 
@@ -482,37 +600,27 @@ def client_assistant_reply(history: List[Dict], menu: List[Dict], cfg: dict | No
         text = _normalize(user_text)
         if not text:
             return False
-
-        # Señales de personalización/ingredientes
         intent_words = [
             "sin ", "con ", "extra ", "aparte", "remover", "quitar", "agregar", "añadir",
             "ingrediente", "gluten", "vegano", "celíac", "picant", "lactosa", "cambiar",
-            # EN
             "without ", "with ", "extra ", "on the side", "remove", "add", "ingredient",
             "gluten", "vegan", "celiac", "spicy", "lactose", "swap", "replace"
         ]
         if any(w in text for w in intent_words):
-            # Si no menciona con claridad un item del menú, lo marcamos como difícil
             menu_words = _menu_tokens(menu_items)
             user_words = set(re.findall(r"[a-záéíóúñü]+", text))
-            overlap = len(menu_words.intersection(user_words))
-            # Umbral bajo para evitar falsos negativos
-            if overlap < 1:
+            if len(menu_words.intersection(user_words)) < 1:
                 return True
-
-        # Señales de pedir algo que no suena a lo listado
         off_menu_markers = [
-            "no está en el menú", "no veo en el menú", "tienen X?", "hacen X?",
+            "no está en el menú", "no veo en el menú", "tienen ", "hacen ",
             "do you have", "not on the menu", "can you make", "custom"
         ]
         if any(m in text for m in off_menu_markers):
             return True
-
         return False
 
     heuristic_difficult = _looks_difficult(last_user, menu)
 
-    # --- 5) Crear pending si corresponde (por cualquiera de los triggers)
     if llm_suggests_pending or heuristic_difficult:
         try:
             create_pending_question(
@@ -522,7 +630,6 @@ def client_assistant_reply(history: List[Dict], menu: List[Dict], cfg: dict | No
                 ttl_seconds=60
             )
         except Exception:
-            # fallar silencioso para no romper UX, el autoaprobado seguirá funcionando
             pass
 
     return reply
