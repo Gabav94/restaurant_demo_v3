@@ -1031,7 +1031,8 @@ def main():
             ]:
                 if k in st.session_state:
                     del st.session_state[k]
-            st.experimental_rerun()
+            # st.experimental_rerun()
+            st.rerun()
 
     # Menú
     menu = fetch_menu()
